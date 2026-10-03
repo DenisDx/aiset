@@ -1,0 +1,56 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+/config.json5
+
+# Runtime state, test results, and backups
+.local/
+.runtime/
+logs/
+results/
+test-results/
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+*.log
+*.jsonl
+*.bak
+*.bak.*
+*.tmp
+*.json5.lock
+*.json.lock
+
+# Python environments, caches, and build output
+venv/
+.venv/
+env/
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+build/
+dist/
+*.egg-info/
+
+# Frontend dependencies and editor settings
+node_modules/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+memory/
+AGENTS.md
+
+#tmp folder and tmp files
+tmp/
+_*.*
+_*/
+
