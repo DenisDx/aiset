@@ -22,17 +22,16 @@ No matches means grep exits with status 1. The copied agent workflow contains
 illustrative placeholder markers; those are documentation examples, not pending
 implementation tasks.
 
-## After independent Git registration
+## Git checks
 
-Only after the user initializes this directory's own repository:
+This directory is its own Git repository:
 
 ```sh
 git status --short
 git diff --check
 ```
 
-Before that, Git commands run here discover the parent aidir repository. They
-must not be treated as aiset's own status or validation.
+These report aiset's own status, not the parent aidir repository.
 
 ## Runtime and tests
 

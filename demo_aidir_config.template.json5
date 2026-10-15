@@ -1,0 +1,754 @@
+// aiset descriptor example for the aidir project configuration.
+// Follows the proposed grammar in SPEC_.md section 4.6 and the path/edit
+// contract in section 5.3. This is a TEMPLATE, not an approved contract:
+// review against the actual aidir configuration and adjust per project needs.
+//
+// Envelope: descriptor_version is the aiset descriptor schema version
+// (independent of the project configuration "version" field, which lives
+// in the configuration document itself).
+
+{
+  descriptor_version: "1.0",
+  project: "aidir",
+  config_version: "1.0",
+  // Project-owned metadata. Ignored at runtime, retained for the host,
+  // reported by validate_descriptor as UNKNOWN_DESCRIPTOR_PROPERTY warnings
+  // (or errors in strict development mode). See section 4.5.
+  x_aidir: {
+    subsystem: "settings",
+    owner: "platform",
+    notes: "Mirrors fields in aidir/config.json5.example",
+  },
+
+  root: {
+    type: "object",
+    description: "aidir main configuration",
+
+    children: {
+
+      // -----------------------------------------------------------------
+      // Top-level identity and runtime location
+      // -----------------------------------------------------------------
+
+      version: {
+        type: "string",
+        const: "1.0",
+        description: "Configuration schema version. Matches descriptor config_version.",
+        read_only: true,
+        apply: "restart",
+      },
+      title: {
+        type: "string",
+        description: "Human-readable instance title",
+        env: { allowed: true, convert: "string" },
+      },
+      instance: {
+        type: "string",
+        description: "Instance identifier (env AIDIR_INSTANCE)",
+        pattern: "^[a-zA-Z0-9_-]+$",
+        env: { allowed: true, convert: "string" },
+        apply: "restart",
+      },
+      root: {
+        type: "string",
+        description: "Filesystem root for the instance (env AIDIR_ROOT)",
+        env: { allowed: true, convert: "string" },
+        apply: "restart",
+      },
+
+      // -----------------------------------------------------------------
+      // Redis connection (relies on env placeholders, one secret)
+      // -----------------------------------------------------------------
+
+      //AGENT: keep redis.host at the default unless the deployment explicitly
+      //       points to a remote Redis. Localhost is required by the embedded
+      //       scheduler; values like 0.0.0.0 are almost always a mistake.
+      redis: {
+        type: "object",
+        description: "Redis connection used by aidir subsystems",
+        apply: "reload",
+        children: {
+          host: {
+            type: "string",
+            env: { allowed: true, convert: "string" },
+            ui: { placeholder: "127.0.0.1" },
+          },
+          //AGENT: this port must not exceed 65535. Non-default values
+          //       >10000 usually mean a test setup was promoted to
+          //       production by accident — confirm before changing.
+          port: {
+            type: "int",
+            minimum: 1,
+            maximum: 65535,
+            env: { allowed: true, convert: "int" },
+            ui: { placeholder: "6379" },
+          },
+          password: {
+            type: "string",
+            secret: true,
+            env: { allowed: true, convert: "string" },
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // Cron
+      // -----------------------------------------------------------------
+
+      cron: {
+        type: "object",
+        description: "Embedded cron vs system cron",
+        apply: "reload",
+        children: {
+          embedded: { type: "bool", default: false },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // Logging. Demonstrates the union type (int 0-7 or named string)
+      // and dynamic-key sub-objects (key_enum and key_pattern).
+      // -----------------------------------------------------------------
+
+      logging: {
+        type: "object",
+        description: "Logging subsystem configuration",
+        apply: "reload",
+        children: {
+          level: {
+            // Union: integer (systemd-journald scale 0-7) OR named string.
+            // Matches the example in section 4.3.
+            type: "union",
+            description: "Default level for all subsystems",
+            apply: "live",
+            env: { allowed: true, convert: "string" },
+            children_options: [
+              { type: "int", minimum: 0, maximum: 7 },
+              {
+                type: "string",
+                enum: [
+                  "emergency", "alert", "critical", "error",
+                  "warning", "notice", "info", "debug",
+                ],
+              },
+            ],
+          },
+          timezone: {
+            type: "string",
+            description: '"local", "UTC", or an IANA name',
+            env: { allowed: true, convert: "string" },
+          },
+          wipe_period: {
+            type: "int", minimum: 0,
+            description: "Seconds between log wipe runs (0 = never)",
+            env: { allowed: true, convert: "int" },
+          },
+          wipe_max_age: { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+          trim_period:  { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+          max_log_size: { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+
+          audit: {
+            type: "object",
+            description: "Audit log retention",
+            apply: "restart",
+            children: {
+              directory: { type: "string" },
+              retention_days: { type: "int", minimum: 0 },
+              retention_period: { type: "int", minimum: 0 },
+              max_total_bytes: { type: "int", minimum: 0 },
+              emergency_max_total_bytes: { type: "int", minimum: 0 },
+              max_spool_age_seconds: { type: "int", minimum: 0 },
+              max_inline_body_bytes: { type: "int", minimum: 0 },
+              secret_metadata_keys: {
+                type: "array",
+                children: { type: "string" },
+              },
+              writer_queue_size: { type: "int", minimum: 1 },
+              overflow_policy: {
+                type: "string",
+                enum: ["best_effort", "drop_oldest", "block"],
+              },
+            },
+          },
+
+          // Per-subsystem thresholds: dynamic keys restricted to known
+          // subsystems (no free-form UI tags).
+          levels: {
+            type: "object",
+            description: "Per-subsystem log thresholds (string)",
+            apply: "reload",
+            key_enum: ["workers", "http", "webui"],
+            additional_children: {
+              type: "string",
+              enum: [
+                "emergency", "alert", "critical", "error",
+                "warning", "notice", "info", "debug",
+              ],
+            },
+          },
+
+          // Per-subsystem thresholds for all.log: same subsystem set, int 0-7.
+          alllevels: {
+            type: "object",
+            description: "Per-subsystem all.log thresholds (int 0-7)",
+            apply: "reload",
+            key_enum: ["core", "workers", "http", "webui"],
+            additional_children: {
+              type: "int", minimum: 0, maximum: 7,
+            },
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // HTTP global limits
+      // -----------------------------------------------------------------
+
+      http: {
+        type: "object",
+        description: "Global HTTP server limits",
+        apply: "reload",
+        children: {
+          max_request_size: {
+            type: "int", minimum: 0,
+            description: "Maximum accepted inbound request body size in bytes",
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // Resources: array of objects. Demonstrates array children + helper
+      // for the "add a resource" workflow.
+      // -----------------------------------------------------------------
+
+      resources: {
+        type: "array",
+        description: "Tracked hardware resources (VRAM etc.)",
+        apply: "restart",
+        helper: {
+          tag: "resource_form",
+          actions: ["create", "edit"],
+          presentation: "modal",
+          settings: { offer_presets: true },
+        },
+        children: {
+          type: "object",
+          children: {
+            id: {
+              type: "string",
+              pattern: "^[a-zA-Z0-9_-]+$",
+              read_only: true,
+              description: "Resource identifier (immutable after creation)",
+            },
+            type: {
+              type: "string",
+              enum: ["cuda", "cpu", "metal", "rocm"],
+            },
+            arch: { type: "string" },
+            limits: {
+              type: "object",
+              description: "Resource limits keyed by uppercase code (VRAM, ...)",
+              additional_children: { type: "int", minimum: 0 },
+              key_pattern: "^[A-Z][A-Z0-9_]*$",
+            },
+            alive_time: { type: "int", minimum: 0 },
+            keep_alive: { type: "int", minimum: 0 },
+            keep_alive_period: { type: "int", minimum: 0 },
+            provider: {
+              type: "string",
+              description: "Provider id from models.providers",
+              validators: ["provider_id_exists"],
+            },
+            monitoring: {
+              type: "object",
+              nullable: true,
+              children: {
+                poll_interval: { type: "int", minimum: 1 },
+                command_timeout: { type: "int", minimum: 1 },
+                sensors: {
+                  type: "array",
+                  children: {
+                    type: "object",
+                    children: {
+                      id:   { type: "string", pattern: "^[a-zA-Z0-9_]+$" },
+                      label:{ type: "string" },
+                      unit: { type: "string" },
+                      command: {
+                        type: "string",
+                        ui: { widget: "textarea", rows: 3,
+                              placeholder: "nvidia-smi --query-gpu=...",
+                              help: "Editing does not execute this command." },
+                      },
+                      threshold: {
+                        type: "object",
+                        children: {
+                          operator: {
+                            type: "string",
+                            enum: ["above", "below", "equal"],
+                          },
+                          value: { type: "number" },
+                          reactions: {
+                            type: "array",
+                            children: { type: "string" },
+                          },
+                          cooldown: { type: "int", minimum: 0 },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // Endpoints: array of objects, including a tools sub-object with
+      // dynamic keys.
+      // -----------------------------------------------------------------
+
+      endpoints: {
+        type: "array",
+        description: "Network endpoints exposed by aidir",
+        apply: "restart",
+        children: {
+          type: "object",
+          children: {
+            id: {
+              type: "string",
+              read_only: true,
+              pattern: "^[a-zA-Z0-9_-]+$",
+            },
+            api: {
+              type: "string",
+              enum: ["openaix", "mcp", "http", "ollama"],
+            },
+            port: {
+              type: "int", minimum: 1, maximum: 65535,
+              env: { allowed: true, convert: "int" },
+            },
+            bindAddress: {
+              type: "string",
+              env: { allowed: true, convert: "string" },
+            },
+            worker: { type: "string" },
+            middlewares: {
+              type: "array",
+              children: { type: "string" },
+              default: [],
+            },
+            logging: {
+              type: "object",
+              children: {
+                level: { type: "string" },
+                alllevel: { type: "string" },
+              },
+            },
+            tools: {
+              type: "object",
+              description: "Endpoint-specific tool routing",
+              apply: "reload",
+              additional_children: {
+                type: "object",
+                children: {
+                  worker: { type: "string" },
+                  description: { type: "string" },
+                  inputSchema: { type: "object", description: "JSON Schema for tool input" },
+                },
+              },
+              key_pattern: "^[a-zA-Z][a-zA-Z0-9_]*$",
+            },
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // Workers: demonstrates dynamic keys (items), a sub-tree hook, and
+      // the on_reject dynamic-key object limited to three known keys.
+      // -----------------------------------------------------------------
+
+      //AGENT: workers.items is the only place to register a new worker.
+      //       Adding a worker under endpoints instead is a recurring
+      //       mistake — it gets loaded but never scheduled.
+      workers: {
+        type: "object",
+        description: "Worker subsystem",
+        apply: "reload",
+        children: {
+          tools_max_turns: {
+            type: "int", minimum: 1,
+            description: "Default max turns for internal tool loop",
+          },
+          default: { type: "string" },
+
+          items: {
+            type: "object",
+            description: "Dynamic worker configurations keyed by worker id",
+            apply: "reload",
+            additional_children: {
+              type: "object",
+              hooks: {
+                before_create: [
+                  { tag: "validate_worker_provider", scope: "node", settings: {} },
+                ],
+                before_update: [
+                  { tag: "validate_worker_provider", scope: "node", settings: {} },
+                ],
+              },
+              children: {
+                enabled: { type: "bool", default: true },
+                //AGENT: provider id must already exist in models.providers.
+                //       Use an existing one (ollama_local, ollama_remote,
+                //       llama_local, remote_aidir) unless intentionally
+                //       introducing a new provider.
+                provider: {
+                  type: "string",
+                  validators: ["provider_id_exists"],
+                },
+                request_timeout: {
+                  type: "int", minimum: 1,
+                  env: { allowed: true, convert: "int" },
+                },
+                provider_cooldown_seconds: { type: "int", minimum: 0 },
+                tools: {
+                  type: "object",
+                  additional_children: {
+                    type: "object",
+                    children: { worker: { type: "string" } },
+                  },
+                  key_pattern: "^[a-zA-Z][a-zA-Z0-9_]*$",
+                },
+                generation_defaults: {
+                  type: "object",
+                  additional_children: { type: "number" },
+                  key_pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$",
+                },
+                logging: {
+                  type: "object",
+                  children: {
+                    level: { type: "string" },
+                    alllevel: { type: "string" },
+                    save_llm_request: { type: "bool" },
+                  },
+                },
+                fallbacks: { type: "array", children: { type: "string" } },
+                retry_count: { type: "int", minimum: 0 },
+                retry_period: { type: "int", minimum: 0 },
+                on_reject: {
+                  type: "object",
+                  additional_children: {
+                    type: "object",
+                    children: {
+                      action: {
+                        type: "string",
+                        enum: ["fallback-retry", "retry", "cancel"],
+                      },
+                      retry_count: { type: "int", minimum: 0 },
+                      retry_period: { type: "int", minimum: 0 },
+                    },
+                  },
+                  key_pattern: "^(unavailable|busy|error)$",
+                },
+                includeWorkers: { type: "bool" },
+                includeResources: { type: "bool" },
+                servers: {
+                  type: "object",
+                  additional_children: {
+                    type: "object",
+                    children: {
+                      type: { type: "string", enum: ["http", "stdio", "sse"] },
+                      url: { type: "string" },
+                    },
+                  },
+                  key_pattern: "^[a-zA-Z][a-zA-Z0-9_]*$",
+                },
+                auth: {
+                  type: "object",
+                  children: {
+                    type: { type: "string", enum: ["bearer", "basic", "none"] },
+                    token: {
+                      type: "string", secret: true,
+                      env: { allowed: true, convert: "string" },
+                    },
+                  },
+                },
+                tools_ttl: { type: "int", minimum: 0 },
+              },
+            },
+            key_pattern: "^[a-zA-Z][a-zA-Z0-9_]*$",
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // Middleware placeholder
+      // -----------------------------------------------------------------
+
+      middleware: {
+        type: "object",
+        description: "Middleware configurations (keyed by middleware id)",
+        apply: "restart",
+        children: {
+          items: {
+            type: "object",
+            additional_children: {
+              type: "object",
+              additional_children: { description: "free-form middleware config" },
+            },
+            key_pattern: "^[a-zA-Z][a-zA-Z0-9_]*$",
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // Models: dynamic provider map. A subtree hook validates provider
+      // and model id changes before persistence.
+      // -----------------------------------------------------------------
+
+      models: {
+        type: "object",
+        description: "Model providers and their model lists",
+        apply: "reload",
+        children: {
+          providers: {
+            type: "object",
+            hooks: {
+              before_create: [
+                { tag: "validate_model_id", scope: "subtree", settings: {} },
+              ],
+              before_update: [
+                { tag: "validate_model_id", scope: "subtree", settings: {} },
+              ],
+            },
+            additional_children: {
+              type: "object",
+              children: {
+                api: {
+                  type: "string",
+                  enum: ["ollama", "openaix", "llama-cpp", "smart"],
+                },
+                baseUrl: {
+                  type: "string",
+                  env: { allowed: true, convert: "string" },
+                  ui: { placeholder: "http://127.0.0.1:11434" },
+                },
+                host: { type: "string" },
+                port: { type: "int", minimum: 1, maximum: 65535 },
+                exec_cmd: { type: "string", default: "" },
+                startup_timeout: { type: "int", minimum: 0 },
+                models: {
+                   type: "array",
+                   children: {
+                     type: "object",
+                     //AGENT: the model id is read-only. To rename a model,
+                     //       create a new one and remove the old entry.
+                     children: {
+                       id: {
+                         type: "string",
+                         read_only: true,
+                         description: "Model id is immutable after creation",
+                      },
+                      name: { type: "string" },
+                      alias: { type: "string" },
+                      type: { type: "string" },
+                      contextWindow: { type: "int", minimum: 1 },
+                      reasoning: { type: "bool", default: true },
+                      embedding: { type: "bool", default: false },
+                      default_tool_injection: { type: "bool", default: true },
+                      input: {
+                        type: "array",
+                        children: { type: "string" },
+                      },
+                      items: {
+                        type: "array",
+                        description: "first_available chain entries",
+                        children: {
+                          type: "object",
+                          children: {
+                            provider: { type: "string" },
+                            model: { type: "string" },
+                            request_timeout_ms: { type: "int", minimum: 0 },
+                            fallback_prio: { type: "int" },
+                          },
+                        },
+                      },
+                      resources: {
+                        type: "object",
+                        description: "Per-resource VRAM budget for this model",
+                        additional_children: {
+                          type: "object",
+                          additional_children: { type: "int", minimum: 0 },
+                        },
+                        key_pattern: "^[a-zA-Z][a-zA-Z0-9_]*$",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            key_pattern: "^[a-zA-Z][a-zA-Z0-9_]*$",
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // WebUI: auth users with secret passwords, dynamic request_timeouts
+      // -----------------------------------------------------------------
+
+      webui: {
+        type: "object",
+        description: "Web UI configuration",
+        apply: "restart",
+        children: {
+          port: {
+            type: "int", minimum: 1, maximum: 65535,
+            env: { allowed: true, convert: "int" },
+          },
+          bind: {
+            type: "string",
+            env: { allowed: true, convert: "string" },
+          },
+          auth: {
+            type: "object",
+            children: {
+              mode: { type: "string", enum: ["login", "none"] },
+              session_ttl: { type: "int", minimum: 0 },
+              users: {
+                type: "array",
+                children: {
+                  type: "object",
+                  children: {
+                    login: { type: "string" },
+                    password: {
+                      type: "string", secret: true,
+                      env: { allowed: true, convert: "string" },
+                    },
+                    permissions: {
+                      type: "array",
+                      children: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          request_timeouts: {
+            type: "object",
+            additional_children: { type: "int", minimum: 0 },
+            key_pattern: "^[a-z][a-z0-9_]*$",
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // API users (separate from WebUI users)
+      // -----------------------------------------------------------------
+
+      users: {
+        type: "object",
+        description: "API users for OpenAI/Ollama-compatible endpoints",
+        apply: "restart",
+        children: {
+          items: {
+            type: "array",
+            children: {
+              type: "object",
+              children: {
+                login: { type: "string" },
+                token: {
+                  type: "string", secret: true,
+                  env: { allowed: true, convert: "string" },
+                },
+                envids: { type: "array", children: { type: "string" } },
+                autoassign_envid: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // Task timeouts
+      // -----------------------------------------------------------------
+
+      tasks: {
+        type: "object",
+        description: "Task subsystem timeouts",
+        apply: "reload",
+        children: {
+          restart_wait_timeout: { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+          queue_timeout:         { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+          run_timeout:           { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+          external_task_live:    { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // Envids: dynamic-key object of per-envid contexts
+      // -----------------------------------------------------------------
+
+      envids: {
+        type: "object",
+        description: "Envid presets (file-backed; Redis values may override on startup)",
+        apply: "reload",
+        children: {
+          check_period_minutes: { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+          store_duration_minutes: { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+          default_context_building: {
+            type: "object",
+            children: {
+              bootstrapMaxChars: { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+              bootstrapTotalMaxChars: { type: "int", minimum: 0, env: { allowed: true, convert: "int" } },
+            },
+          },
+          items: {
+            type: "object",
+            additional_children: {
+              type: "object",
+              children: {
+                description: { type: "string" },
+                parent: { type: "string" },
+                context: {
+                  type: "object",
+                  children: {
+                    items: {
+                      type: "object",
+                      additional_children: {
+                        type: "object",
+                        children: {
+                          type: { type: "string", enum: ["mcp", "file", "http"] },
+                          endid: { type: "string" },
+                          host: { type: "string" },
+                          location: { type: "string" },
+                          token: {
+                            type: "string", secret: true,
+                            env: { allowed: true, convert: "string" },
+                          },
+                        },
+                      },
+                    },
+                    files: {
+                      type: "array",
+                      children: {
+                        type: "object",
+                        children: {
+                          name: { type: "string" },
+                          location: { type: "string" },
+                          token: {
+                            type: "string", secret: true,
+                            env: { allowed: true, convert: "string" },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            key_pattern: "^[a-zA-Z][a-zA-Z0-9_-]*$",
+          },
+        },
+      },
+    },
+  },
+}
