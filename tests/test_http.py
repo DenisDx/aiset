@@ -232,6 +232,20 @@ def test_static_frontend_and_assets_are_served(service):
     assert b"renderNodeEditor" in script
 
 
+def test_env_route_reports_presence_only(service, resolver, principal):
+    resolver.dotenv["AISET_PRESENT"] = "value"
+    client = Client(create_app(service))
+    status, payload = client.post(
+        "/api/settings/env", {"document": "demo", "names": ["AISET_PRESENT", "AISET_ABSENT"]}
+    )
+    assert status == 200
+    assert payload["present"] == {"AISET_PRESENT": True, "AISET_ABSENT": False}
+    assert "value" not in str(payload), "the route must never echo a value"
+
+    status, payload = client.post("/api/settings/env", {"document": "demo", "names": "AISET_PRESENT"})
+    assert status == 400 and payload["error"]["code"] == "BAD_REQUEST"
+
+
 def test_unsupported_internal_error_is_sanitized(service):
     def broken(*args, **kwargs):
         raise RuntimeError("internal detail")
@@ -242,3 +256,22 @@ def test_unsupported_internal_error_is_sanitized(service):
     assert status == 500
     assert payload["error"]["code"] == "INTERNAL_ERROR"
     assert "internal detail" not in json.dumps(payload)
+
+def test_static_assets_are_never_served_stale(service):
+    """A cached script or stylesheet looks exactly like a broken one."""
+    client = Client(create_app(service, static_dir=Path("frontend")))
+    environ = {
+        "REQUEST_METHOD": "GET", "PATH_INFO": "/assets/aiset-tree.js",
+        "QUERY_STRING": "", "wsgi.input": BytesIO(b""),
+    }
+    captured: dict = {}
+
+    def start_response(status, headers):
+        captured["status"] = int(status.split()[0])
+        captured["headers"] = {key.lower(): value for key, value in headers}
+
+    body = b"".join(client.app(environ, start_response))
+    assert captured["status"] == 200
+    assert captured["headers"]["cache-control"] == "no-cache, must-revalidate"
+    assert captured["headers"]["last-modified"], "the asset must carry a validator"
+    assert b"expandAll" in body

@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 /config.json5
+/demo2/config.json5
+/demo2/.env
+!/demo2/config.json5.example
+!/demo2/.env.example
 
 # Runtime state, test results, and backups
 .local/
@@ -55,4 +59,3 @@ AGENTS.md
 tmp/
 _*.*
 _*/
-

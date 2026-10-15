@@ -14,7 +14,9 @@ python3 -m venv .venv
 ## Tests
 
 ```sh
-.venv/bin/python -m pytest                    # whole suite
+.venv/bin/python -m pytest                    # library + demo2 suite (310 tests)
+.venv/bin/python -m pytest tests              # library suite only
+.venv/bin/python -m pytest demo2/tests        # demo2 host and assistant only
 .venv/bin/python -m pytest tests/test_jsonsrc.py -q   # source preservation only
 .venv/bin/python -m pytest -k "comment"        # comment ownership and conflicts
 ./test.sh                                    # suite plus descriptor diagnostics
@@ -32,6 +34,21 @@ python3 -m venv .venv
 
 The demo is a plain internal test app: HTTP only, no TLS, no Host/Origin/CSRF/CORS
 checks, bind failure is reported instead of silently choosing another port.
+
+## demo2 acceptance host
+
+```sh
+./run_demo2.sh                                   # 0.0.0.0:8383 by default
+./run_demo2.sh --demo2.server.port:8384          # document-scoped override
+./run_demo2.sh --server.port:8384                # bare path override
+DEMO2_STATE_DIR=/tmp/demo2 ./run_demo2.sh        # isolated state
+```
+
+The launcher seeds `demo2/config.json5` and `demo2/.env` from their `.example`
+files only when they are absent, then runs `demo2/app.py` with `.venv/bin/python`.
+
+Host routes: `GET /api/demo2/health`, `GET /api/demo2/status`,
+`POST /api/demo2/reload`, `POST /api/demo2/restart`, `POST /api/demo2/chat`.
 
 ## Descriptor diagnostics
 

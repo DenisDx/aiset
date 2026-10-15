@@ -230,14 +230,20 @@
     var snippet = document.getElementById("aiset-assets");
     if (snippet) { return snippet.innerHTML; }
     return '<link rel="stylesheet" href="/assets/aiset.css">' +
-           '<script src="/assets/aiset.js"></script>';
+           '<script src="/assets/aiset.js"></script>' +
+           '<script src="/assets/aiset-tree.js"></script>';
   }
 
   function renderNodeEditor(documentId, path) {
     return includeAssets() + '<div data-aiset-node="' + (documentId || "") + '"></div>';
   }
 
-  function renderFullEditor(documentId) {
+  /* The full editor is the generated tree editor (SPEC_service.md section 21);
+   * the single-pointer textarea above stays available for raw value editing. */
+  function renderFullEditor(documentId, options) {
+    if (global.aiset && global.aiset.renderTreeEditor) {
+      return global.aiset.renderTreeEditor(documentId || current, options || {});
+    }
     return includeAssets() + '<div data-aiset-full="' + (documentId || "") + '"></div>';
   }
 

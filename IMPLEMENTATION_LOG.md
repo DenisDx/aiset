@@ -121,6 +121,30 @@ generated forms/helpers, AI) are out of scope and reported as explicit
 - [x] G5. MCP adapter and the hook dispatcher are reported as
       `UNSUPPORTED_CAPABILITY` (phases M2).
 
+### Phase J - demo2 acceptance host (proposal_demo2.md)
+
+- [x] J1. Protected-document correction proposal `SPEC_.md` (structural
+      operations, tree snapshots, generated editors, phase 4 list) and the
+      interface additions `SPEC_service.md` sections 19-21.
+- [x] J2. Source-preserving `apply_add`, `apply_remove`, `apply_move` in
+      `jsonsrc.py`: append token, comma and comment ownership, inline and
+      multiline arrays, block-end comments, dynamic keys.
+- [x] J3. `service.tree()` with authorized snapshots, per-node capabilities,
+      secret handling; `GET /api/settings/tree`.
+- [x] J4. `service.apply_operations()` atomic staged batches for
+      set/add/remove/move; `POST /api/settings/operations[/validate]`.
+- [x] J5. Reusable tree editor assets (`aiset-tree.js`): typed controls, add,
+      remove, move, add/remove property, staged changes, Apply/Reload, conflict
+      handling, independent instances; `render_tree_editor`, `mountTree`.
+- [x] J6. `demo2/` host: `.env` reader, config/descriptor examples covering
+      every required shape, `app.py` with lifecycle and chat routes,
+      `run_demo2.sh` launcher.
+- [x] J7. AIDIR-styled two-pane frontend with the assistant pane.
+- [x] J8. Configuration assistant: OpenAI-compatible transport, bounded tool
+      rounds, read/stage tools only, per-session history, no secret values.
+- [x] J9. Tests: 36 demo2 tests (including a local fake provider) and 36 new
+      library tests for the tree, operations, and UI assets.
+
 ### Phase H - verification and documents
 
 - [x] H1. `tests/` covering the M1 acceptance matrix with pytest.
@@ -176,10 +200,150 @@ generated forms/helpers, AI) are out of scope and reported as explicit
   documented status mapping, so no correction to SPEC_service.md was required.
   A GET route for the registered document ids (`{base}/documents`) exists so the
   UI can offer a document selector.
+- 2026-10-15. Defect found in manual use: the demo2 page loaded but stayed empty
+  because `frontend/app.js` touched DOM nodes while the document was still
+  parsing. The script now waits for the document, loads with `defer`, and fails
+  visibly ("editor assets are not loaded") instead of silently. A headless page
+  smoke test (`demo2/tests/test_page.py`) renders the three shipped scripts in
+  order and asserts that the editor mounts and the status is fetched.
+- 2026-10-15. Chat failures were reported as `INTERNAL_ERROR`; provider and
+  protocol errors now map to stable codes and statuses (503 unreachable, 504
+  timeout, 502 HTTP/protocol) with the provider's own message, so a wrong model
+  name is reported as such instead of looking like an empty answer.
+- 2026-10-15. Two assistant findings from manual use, both fixed in the host:
+  - A model addresses the configuration root as `/`; the canonical JSON Pointer
+    for the root is the empty string, so the tool call failed with NOT_FOUND and
+    the assistant told the user the root was undeclared. Tool paths are now
+    normalized (`/`, `root`, `server/port`, trailing slashes), the system prompt
+    states the convention, and an unknown path returns the declared sections with
+    a hint instead of a bare error.
+  - A malformed tool-call argument aborted the whole answer. Argument parsing is
+    now tolerant (single quotes, code fences, object form) and a still-unparsable
+    call becomes a retryable tool result, not a fatal 502.
+  - The bounded tree is returned as structured JSON with explicit `truncated`
+    markers rather than a flat preview, so a root read is always usable.
+- 2026-10-15. Tree view options added on user request: `expandAll()` /
+  `collapseAll()` with **Expand all** and **Collapse all** in the editor toolbar
+  (the document root stays open on collapse), an opt-in `valuesAsText`
+  representation of objects and arrays that shows the stored source fragment as
+  a read-only block instead of an editable value, and square icon buttons for the
+  structural actions with the purpose in the `title` tooltip. The int fields are
+  no longer white: `input[type="number"]` was missing from the demo2 palette.
+  320 tests; no server change was needed because the tree snapshot already
+  carries `value_text` for every node.
+- 2026-10-15. The tree snapshot now carries declared keys that the file does not
+  contain (`exists: false`, with `default_applied` in the effective view), and
+  the editor hides them unless `showAbsent` is set; demo2 offers the second
+  checkbox. Leaves with nothing to show render a coloured type mark instead of
+  an empty control (`i`/`n` green, `"` blue, `b` violet, `?` muted, never red).
+  Placeholders also work on the multiline control, and the demo descriptor now
+  declares six of them, including on an empty and on two absent keys. The tree
+  toggles are larger in the demo2 theme. 323 tests; `examples/` stays untouched.
+- 2026-10-15. Four defects found by hand in the demo2 tree:
+  - Icons never appeared on array items: `kind` was derived from the node type,
+    so a string inside an array was a `leaf`, and `remove`/`reorder` were granted
+    to the array instead of to its items. `kind` now follows the parent, item
+    capabilities come from the item path, a `read_only` array freezes its items,
+    and an array no longer offers a misleading "remove this item".
+  - Static assets were served without cache headers, so a browser could keep an
+    old script or stylesheet and look exactly like a broken one: `no-cache` plus
+    `Last-Modified` are sent now.
+  - The key input flew to the right edge because of `margin-left: auto`.
+  - A nullable field mixed the string "null" with a stored null: an explicit
+    `null` switch now stages a real null, locks the text control and shows it as
+    disabled; unticking reverts to the stored value.
+  Placeholders were verified on host, port, an empty string, a multiline string
+  and two absent keys; 326 tests.
+- 2026-10-15. Two readability additions on request: the tree snapshot now carries
+  `comments` (the comments of the source file that introduce a node, decorative
+  section rules dropped) and the editor shows them in the tooltip of the node
+  name together with the descriptor description, flags, apply policy, default,
+  constraints and the stored value. A node with a declared default also gets a
+  small icon button that stages it; it is disabled while the stored value
+  already is the default. 328 tests.
+- 2026-10-15. Environment placeholders and raw source editing (SPEC_.md
+  correction 4). A node with a stored `${VAR:-default}` used to render empty in
+  a typed control, and staging a value destroyed the substitution. The tree
+  snapshot now carries `template: {name, default}`, and the editor renders the
+  variable name and the inline fallback as two controls, the fallback with the
+  control of the declared type. An empty name stores the inline value; every
+  node with `env.allowed` gets a button that switches it into that mode; every
+  editable node gets a raw source mode that hides the subtree and stages one
+  validated `set`. `POST <base>/env` reports whether a variable is set, never
+  its value. 332 tests.
+- 2026-10-15. Raw editor refinements: the window grows when the fragment does
+  not fit, never past the pane width or the screen height minus their padding,
+  and a size the user dragged is never taken away. The button that opens it no
+  longer looks like a text field: it is a bold, centred `{..}` text label
+  instead of a braced icon. 332 tests.
+- 2026-10-15. Added `AGENT_INTEGRATION.md`: a task-oriented integration guide
+  written for agents rather than for a human reader. Dense tables, exact
+  identifiers, a reading-order table, hard rules first, then Python/HTTP/editor
+  contracts, descriptor grammar, paths and views, operations, the tree
+  snapshot, permissions, an error table with causes, extension and testing
+  checklists, and the do-not list. It points at `SPEC_service.md` for normative
+  detail instead of duplicating it, and is listed in `DOCUMENTS.MD`.
+- 2026-10-15. Square action buttons were squeezed to 4px of content: the generic
+  `.aiset-tree-actions button` rule (specificity 0,1,1) came after
+  `.aiset-tree-action` (0,1,0) and applied its 10px padding, so with
+  `box-sizing: border-box` the caption had nowhere to sit. The generic rule now
+  excludes `.aiset-tree-action`. Both text captions are 9px bold and centred
+  (`{..}` for raw source, `↺` for restoring a default), and the default button
+  switched from an SVG to the same text treatment so the font rules reach it.
+- 2026-10-15. The `.env` affordance was backwards. It is a button on a plain
+  value that switches the node into substitution mode; a node that already uses
+  a placeholder shows no button, only its name, its typed fallback and a plain
+  note about whether the variable is set. The button is offered on every
+  editable scalar and is disabled with an explanation where the descriptor
+  forbids substitution, instead of being hidden. It is a small pill rather than
+  a 24px square, because a four-character caption does not fit one.
+- 2026-10-15. Two defects in the `.env` button, both found by dumping what the
+  editor renders for every node of demo2:
+  - `_button()` dropped its `kind` argument, so the `env` class never reached the
+    element: the pill styling never applied and a four-character caption
+    overflowed the 24px square.
+  - The button was disabled wherever the descriptor has no `env.allowed`, and in
+    the demo no plain field declares it, so it was never usable anywhere. It now
+    works on every editable scalar; the tooltip warns that the server will
+    refuse where the descriptor forbids substitution, and the server keeps
+    refusing at store time.
+- 2026-10-15. The presence indicator was on the wrong rows and was not a button.
+  A node that already stores `${VAR:-...}` shows the variable in its own name
+  field, so the note there was noise; it is gone. The check now belongs to the
+  mode opened from a plain value: after a name is typed the row grows a real
+  button "set in .env" / "not set" that asks the server again, and it stays
+  disabled until there is a name to check.
+- 2026-10-16. Four editor fixes from a screenshot: the caption buttons `.env`,
+  `{..}` and `↺` share one pill style; `{..}` and `↺` are offered on every row and
+  disabled with their reason where they cannot act (read-only field, no declared
+  default); the presence control no longer renders as an empty dot before a
+  variable name is typed, it appears only once there is something to check; and
+  the green `env VARIABLE` badge is gone, because it repeated the name the field
+  next to it already shows.
 - 2026-10-15. M2/M4 work deliberately not started: MCP adapter, hook
-  dispatcher, generated forms, helper micro-forms, history/restore, and AI
-  execution. Recognized hook bindings are refused at write time with
-  `UNSUPPORTED_CAPABILITY`.
+  dispatcher, helper micro-forms, history/restore, and a general agent
+  framework. Recognized hook bindings are refused at write time with
+  `UNSUPPORTED_CAPABILITY`. The demo2 assistant is host code limited to aiset's
+  public service, exactly as the proposal requires.
+- 2026-10-15. `demo2` answers to the proposal's three open questions: the model
+  identifier lives in `demo2/.env` (`DEMO2_AI_MODEL`), agent changes are staged
+  for the user to apply, and the application reports `reload_required` /
+  `restart_required` states with user-initiated Reload and Restart actions
+  (Restart re-executes the process with the same interpreter and arguments).
+- 2026-10-15. Findings from the demo2 work that changed the library:
+  - A staged batch is a user-visible transaction over one candidate, not a
+    rollback system; `SPEC_.md` records the correction to the frozen text.
+  - A read-only descendant blocks a parent edit only when its bytes change.
+  - A container whose subtree contains an inaccessible secret is denied in the
+    tree snapshot as well, otherwise the parent `value_text` would leak it.
+  - The assistant principal has no secret permissions, so no tool result can
+    carry a secret value.
+  - Tool results are bounded by a character budget and are never truncated
+    mid-JSON.
+  - Restart must acknowledge before re-executing; the re-execution is scheduled
+    so the response reaches the browser first.
+  - `create_app` gained `static_map` so a host can ship its own script and
+    stylesheet next to the bundled assets.
 
 - 2026-10-15. The specification was frozen and renamed to `SPEC.md`; the stale
   `SPEC_.md` references in README/TEST/commands/_AGENT_NOTES were corrected as

@@ -7,6 +7,7 @@ adapter; every decision belongs to the service.
 
 from __future__ import annotations
 
+import email.utils
 import json
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -27,8 +28,13 @@ def create_app(
     principal_resolver: Callable[[dict[str, Any]], Principal] | None = None,
     static_dir: str | Path | None = None,
     assets_dir: str | Path | None = None,
+    static_map: dict[str, str] | None = None,
 ) -> Callable[[dict[str, Any], Callable[..., Any]], Iterable[bytes]]:
-    """Build the WSGI application for one service."""
+    """Build the WSGI application for one service.
+
+    `static_map` adds host files (for example a host script or stylesheet) to
+    the bundled frontend: route path -> file name inside `static_dir`.
+    """
     base = base.rstrip("/")
     static_root = Path(static_dir) if static_dir else None
     asset_root = Path(assets_dir) if assets_dir else Path(__file__).parent / "assets"
@@ -49,7 +55,7 @@ def create_app(
                     service, environ, start_response, method, path[len(base) :] or "/", resolve_principal
                 )
             if static_root is not None:
-                return _static(start_response, static_root, path, asset_root)
+                return _static(start_response, static_root, path, asset_root, static_map or {})
             return _json(start_response, 404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found"}})
         except AisetError as exc:
             return _json(start_response, exc.http_status, exc.to_envelope())
@@ -96,6 +102,15 @@ def _handle_api(
         result = service.get(document, path, view=view, principal=principal)
         return _json(start_response, 200, result.to_dict())
 
+    if method == "GET" and route == "/tree":
+        result = service.tree(
+            _one(query, "document"),
+            _one(query, "path") or "",
+            view=_one(query, "view") or "source",
+            principal=principal,
+        )
+        return _json(start_response, 200, {"ok": True, **result})
+
     if method == "GET" and route == "/documents":
         return _json(start_response, 200, {"ok": True, "documents": sorted(service.documents)})
 
@@ -122,6 +137,26 @@ def _handle_api(
             principal=principal,
         )
         return _json(start_response, 200, result.to_dict())
+
+    if method == "POST" and route in ("/operations", "/operations/validate"):
+        payload = _body(environ, service)
+        result = service.apply_operations(
+            _one(payload, "document"),
+            _operations(payload),
+            expected_revision=payload.get("expected_revision"),
+            expected_descriptor_revision=payload.get("expected_descriptor_revision"),
+            principal=principal,
+            dry_run=route.endswith("/validate"),
+        )
+        return _json(start_response, 200, result.to_dict())
+
+    if method == "POST" and route == "/env":
+        payload = _body(environ, service)
+        names = payload.get("names")
+        if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+            raise BadRequest("'names' must be a nonempty array of variable names")
+        present = service.env_status(_one(payload, "document"), names, principal=principal)
+        return _json(start_response, 200, {"ok": True, "present": present})
 
     if method == "POST" and route == "/load":
         payload = _body(environ, service)
@@ -154,6 +189,14 @@ def _handle_api(
 # --------------------------------------------------------------------------
 
 
+def _operations(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read the operation list of a staged batch request."""
+    operations = payload.get("operations")
+    if not isinstance(operations, list) or not all(isinstance(item, dict) for item in operations):
+        raise BadRequest("'operations' must be a nonempty array of operation objects")
+    return operations
+
+
 def _one(mapping: dict[str, Any], key: str) -> str | None:
     value = mapping.get(key)
     if isinstance(value, list):
@@ -183,6 +226,10 @@ def _body(environ: dict[str, Any], service: Service) -> dict[str, Any]:
     return payload
 
 
+def _not_found(start_response: Callable[..., Any]) -> Iterable[bytes]:
+    return _json(start_response, 404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found"}})
+
+
 def _json(start_response: Callable[..., Any], status: int, payload: dict[str, Any]) -> Iterable[bytes]:
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     start_response(f"{status} {_reason(status)}", JSON_HEADERS + [("Content-Length", str(len(body)))])
@@ -198,29 +245,47 @@ CONTENT_TYPES = {
 }
 
 
+def _http_date(timestamp: float) -> str:
+    """RFC 1123 date, used for the Last-Modified validator."""
+    return email.utils.formatdate(timestamp, usegmt=True)
+
+
 def _static(
     start_response: Callable[..., Any],
     root: Path,
     path: str,
     assets_root: Path,
+    static_map: dict[str, str] | None = None,
 ) -> Iterable[bytes]:
     """Serve the bundled frontend (assets live inside the package)."""
     if path in ("/", "/index.html"):
         target = root / "index.html"
+    elif static_map and path in static_map:
+        name = static_map[path]
+        if "/" in name or ".." in name:
+            return _not_found(start_response)
+        target = root / name
     elif path.startswith("/assets/"):
         name = path[len("/assets/") :]
         if "/" in name or ".." in name:
-            return _json(start_response, 404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found"}})
+            return _not_found(start_response)
         target = assets_root / name
     else:
-        return _json(start_response, 404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found"}})
+        return _not_found(start_response)
     if not target.is_file():
-        return _json(start_response, 404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found"}})
+        return _not_found(start_response)
     body = target.read_bytes()
     content_type = CONTENT_TYPES.get(target.suffix, "application/octet-stream")
+    # Assets are served straight from disk: a stale cached script or stylesheet
+    # is indistinguishable from a broken one, so never let a browser keep it.
     start_response(
         f"200 {_reason(200)}",
-        [("Content-Type", content_type), ("Content-Length", str(len(body)))],
+        [
+            ("Content-Type", content_type),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-cache, must-revalidate"),
+            ("Last-Modified", _http_date(target.stat().st_mtime)),
+        ],
     )
     return [body]
 

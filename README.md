@@ -27,6 +27,10 @@ template engine, descriptor compiler, resolver, validator, store, service) and
 the standalone demo editor. See [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md)
 for the plan and for what belongs to later milestones.
 
+Phase 4 editing capabilities are implemented as well, driven by the `demo2`
+acceptance host: generated tree editors, atomic staged batches, deletion, array
+append/remove, and reordering.
+
 Not implemented yet, by specification: the MCP adapter and the lifecycle-hook
 dispatcher (M2). A descriptor that binds hooks is accepted by the descriptor
 compiler, but any change touching a hook-bound node is refused with
@@ -100,10 +104,65 @@ from aiset.httpd import create_app
 app = create_app(service, base="/api/settings")
 ```
 
-The shipped UI assets (`include_assets`, `render_node_editor`,
-`render_full_editor`) are plain JavaScript in
-[src/aiset/assets/aiset.js](src/aiset/assets/aiset.js); the host includes them
-and inserts the returned HTML fragment.
+## Generated tree editor
+
+The shipped assets add a generated editor for a whole document. The host
+integration is two lines:
+
+```python
+from aiset.assets import render_tree_editor
+page = render_tree_editor("demo2")
+```
+
+```js
+aiset.mountTree("#settings-tree", { document: "demo2", apiBase: "/api/settings" });
+```
+
+It renders object keys and array indexes as collapsible nodes with type,
+description, origin and apply policy, offers controls per type, stages every
+change until **Apply**, and commits the whole batch through the atomic
+operations endpoint. `getPendingOperations`, `stageOperations`,
+`validatePending`, `applyPending`, `reload`, `revert`, `expandAll`,
+`collapseAll`, `setValuesAsText` and `getValuesAsText` are available per
+mounted instance.
+
+Objects and arrays are edited through their children; with `valuesAsText` (or
+`setValuesAsText(true)`) every composite node additionally shows its stored
+source fragment as a read-only text block, and with `showAbsent` (or
+`setShowAbsent(true)`) the tree also lists the keys the descriptor allows but
+the file does not contain yet. Structural actions are square icon buttons whose
+purpose is in their tooltip; a nullable field carries a `null` switch that locks
+the text control while the value is an explicit null, a node with a declared
+default carries a small button that restores it, and the node name explains
+itself on hover with the comments of the file, the description, the default, the
+flags and the stored value. Every node can also be switched to raw source
+editing, and a node whose value is a `${VAR:-default}` placeholder edits the
+variable name and the inline fallback separately, so a substitution is never
+lost by changing the value it falls back to. Interface: SPEC_service.md sections 19-21.
+
+## Structural operations
+
+One batch of `set`, `add`, `remove` and `move` operations is applied to a single
+in-memory candidate and committed as one durable write:
+
+```python
+result = service.apply_operations(
+    "demo2",
+    [
+        {"op": "set", "path": "/server/port", "value_text": "8384"},
+        {"op": "add", "path": "/fixtures/tags/-", "value_text": '"new"'},
+        {"op": "remove", "path": "/fixtures/tags/1"},
+    ],
+    expected_revision=loaded.revision,
+    expected_descriptor_revision=descriptor_revision,
+    principal=principal,
+)
+```
+
+A staged batch is not a transaction system: there is no partial commit, and a
+failing operation writes nothing. HTTP: `POST /api/settings/operations` and
+`POST /api/settings/operations/validate`; the tree snapshot is
+`GET /api/settings/tree`.
 
 ## Repository layout
 
@@ -127,7 +186,9 @@ aiset/
     assets/                 reusable UI assets (JS + CSS)
   frontend/index.html       demo page using the shipped assets
   examples/                 demo and aiset descriptors/configurations, editing skill
-  tests/                    automated suite
+  tests/                    library and host automated suite
+  demo2/                    complete acceptance host (backend, frontend, descriptor, tests)
+  run_demo2.sh              supported demo2 entry point
   .local/demo/              editable demo state (seeded, never tracked)
 ```
 
@@ -175,6 +236,8 @@ precedence profile exists in the library.
 | [SPEC.md](SPEC.md) | Complete specification (read-only for agents). |
 | [SPEC_service.md](SPEC_service.md) | Normative Python/HTTP/MCP interface. |
 | [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) | Implementation plan and work log. |
+| [proposal_demo2.md](proposal_demo2.md) | Proposal for the `demo2` acceptance host and the reusable editor extensions it required. |
+| [SPEC_.md](SPEC_.md) | Proposed corrections to the protected `SPEC.md` (structural operations, tree snapshots, generated editors). |
 | [_AGENT_NOTES.md](_AGENT_NOTES.md) | Implementation guidance and pitfalls. |
 | [TEST.md](TEST.md) | Test protocol and acceptance mapping. |
 | [commands.md](commands.md) | Setup, run, and test commands. |

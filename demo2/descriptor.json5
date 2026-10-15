@@ -1,0 +1,417 @@
+// demo2 descriptor (demo2/descriptor.json5).
+// The authoritative UI and validation template for the demo2 host: every shape
+// declared in proposal_demo2.md section 5.3 appears here with a description.
+//
+// Run: .venv/bin/aiset validate-descriptor demo2/descriptor.json5 --strict
+
+{
+  descriptor_version: "1.0",
+  project: "demo2",
+  config_version: "1.0",
+
+  root: {
+    type: "object",
+    description: "demo2 test host configuration",
+
+    children: {
+
+      // -- server (proposal 5.2) ---------------------------------------
+      server: {
+        type: "object",
+        description: "Bind address and port of the standalone application",
+        apply: "restart",
+        children: {
+          host: {
+            type: "string",
+            description: "Listen address; 0.0.0.0 exposes the demo on every interface",
+            env: { allowed: true, convert: "string" },
+            apply: "restart",
+            ui: { placeholder: "0.0.0.0" },
+          },
+          port: {
+            type: "int",
+            minimum: 1,
+            maximum: 65535,
+            description: "Listen port; 8383 is the demo default and must not be chosen silently",
+            env: { allowed: true, convert: "int" },
+            apply: "restart",
+            ui: { placeholder: "8383" },
+          },
+        },
+      },
+
+      runtime: {
+        type: "object",
+        description: "Host runtime behaviour",
+        apply: "reload",
+        children: {
+          reread_interval_seconds: {
+            type: "number",
+            minimum: 0,
+            maximum: 3600,
+            default: 0,
+            description: "Periodic external re-read; 0 means only on demand",
+          },
+          log_level: {
+            type: "string",
+            enum: ["debug", "info", "warning", "error"],
+            default: "info",
+            description: "Backend log level",
+            env: { allowed: true, convert: "string" },
+            ui: { placeholder: "info" },
+          },
+        },
+      },
+
+      // -- AI assistant (proposal 5.2 and 10) --------------------------
+      ai: {
+        type: "object",
+        description: "Configuration assistant; proposals are staged, never written directly",
+        apply: "restart",
+        children: {
+          enabled: {
+            type: "bool",
+            default: true,
+            description: "Master switch for the chat pane",
+            env: { allowed: true, convert: "bool" },
+          },
+          provider: {
+            type: "object",
+            description: "OpenAI-compatible Chat Completions provider",
+            children: {
+              type: {
+                type: "string",
+                enum: ["openai"],
+                description: "Provider protocol dialect",
+              },
+              base_url: {
+                type: "string",
+                description: "Provider base URL, for example http://127.0.0.1:11434/v1",
+                env: { allowed: true, convert: "string" },
+                ui: { placeholder: "http://127.0.0.1:11434/v1" },
+              },
+              api_key: {
+                type: "string",
+                secret: true,
+                description: "Provider key; never leaves the backend",
+                env: { allowed: true, convert: "string" },
+              },
+            },
+          },
+          model: {
+            type: "string",
+            ui: { placeholder: "qwen3:8b" },
+            min_length: 1,
+            description: "Model identifier; the default comes from DEMO2_AI_MODEL",
+            env: { allowed: true, convert: "string" },
+          },
+          timeout_seconds: {
+            type: "int",
+            minimum: 1,
+            maximum: 600,
+            default: 60,
+            description: "Provider request timeout",
+          },
+          temperature: {
+            type: "number",
+            minimum: 0,
+            maximum: 2,
+            default: 0.2,
+            description: "Sampling temperature",
+          },
+          max_tool_rounds: {
+            type: "int",
+            minimum: 1,
+            maximum: 32,
+            default: 8,
+            description: "Bounded number of tool rounds per user message",
+          },
+          require_change_confirmation: {
+            type: "bool",
+            default: true,
+            description: "When true the agent may only stage changes for the user to apply",
+            read_only: true,
+          },
+        },
+      },
+
+      // -- fixtures -----------------------------------------------------
+      fixtures: {
+        type: "object",
+        description: "Fixture values covering every declared shape; no runtime effect",
+        apply: "live",
+        children: {
+
+          scalars: {
+            type: "object",
+            description: "String, integer, number, boolean and explicit null values",
+            children: {
+              text: { type: "string", description: "Ordinary text" },
+              empty_text: {
+                type: "string",
+                description: "Explicitly empty string",
+                ui: { placeholder: "an empty string is stored here; type to replace it" },
+              },
+              unicode_text: { type: "string", description: "Unicode text preserved byte for byte" },
+              multiline: {
+                type: "string",
+                description: "Multiline text with an escaped newline",
+                ui: { widget: "textarea", rows: 3, placeholder: "first line\nsecond line" },
+              },
+              count: { type: "int", minimum: -100, maximum: 100, description: "Bounded integer" },
+              negative_count: { type: "int", description: "Negative integers are legal" },
+              ratio: { type: "number", minimum: 0, maximum: 1, description: "Fractional value" },
+              enabled: { type: "bool", description: "True is a value, not a special case" },
+              disabled: { type: "bool", description: "False stays a stored value" },
+              explicit_null: { type: "null", description: "Explicit null is present" },
+            },
+          },
+
+          constraints: {
+            type: "object",
+            description: "Enum, const, read-only, range, length and pattern constraints",
+            children: {
+              mode: {
+                type: "string",
+                enum: ["strict", "relaxed"],
+                description: "Enum: the editor offers a chooser",
+              },
+              fixed_version: {
+                type: "string",
+                const: "1.0",
+                read_only: true,
+                description: "Const value with read_only: it can never be edited",
+              },
+              code: {
+                type: "string",
+                pattern: "^[A-Z0-9_]{3,16}$",
+                description: "Uppercase code",
+              },
+              bounded: { type: "int", minimum: 0, maximum: 10, description: "Bounded integer" },
+              named: { type: "string", min_length: 3, description: "Short free text" },
+            },
+          },
+
+          optionality: {
+            type: "object",
+            description: "Required, absent, defaulted and nullable fields",
+            children: {
+              required_field: {
+                type: "string",
+                required: true,
+                description: "Required: the candidate is invalid without it",
+              },
+              absent_field: {
+                type: "string",
+                ui: { placeholder: "not written yet — type to add the key" },
+                description: "Absent from the file; the editor may create it",
+              },
+              defaulted_field: {
+                type: "string",
+                default: "default-value",
+                ui: { placeholder: "default-value" },
+                description: "Absent with a default: the default is never written to the file",
+              },
+              nullable_field: {
+                type: "string",
+                nullable: true,
+                description: "Nullable: an explicit null is a legal stored value",
+              },
+            },
+          },
+
+          environment: {
+            type: "object",
+            description: "Environment-backed values, including one secret",
+            children: {
+              host: {
+                type: "string",
+                env: { allowed: true, convert: "string" },
+                description: "String placeholder",
+              },
+              port: {
+                type: "int",
+                env: { allowed: true, convert: "int" },
+                description: "Integer placeholder converted from a string",
+              },
+              api_token: {
+                type: "string",
+                secret: true,
+                env: { allowed: true, convert: "string" },
+                description: "Secret placeholder; the value is never returned to a client",
+              },
+            },
+          },
+
+          arrays: {
+            type: "object",
+            description: "Scalar, object, nested and mixed arrays",
+            children: {
+              strings: {
+                type: "array",
+                description: "String items",
+                children: { type: "string", description: "One tag" },
+              },
+              integers: {
+                type: "array",
+                description: "Integer items",
+                children: { type: "int", minimum: 0, description: "One number" },
+              },
+              booleans: {
+                type: "array",
+                description: "Boolean items",
+                children: { type: "bool", description: "One flag" },
+              },
+              objects: {
+                type: "array",
+                description: "Object items with an identity field",
+                children: {
+                  type: "object",
+                  children: {
+                    id: { type: "string", min_length: 1, description: "Stable identity" },
+                    weight: { type: "number", description: "Relative weight" },
+                  },
+                },
+              },
+              nested: {
+                type: "array",
+                description: "Array of arrays",
+                children: {
+                  type: "array",
+                  children: { type: "int", description: "One inner number" },
+                },
+              },
+              empty: {
+                type: "array",
+                description: "Empty arrays are a present value",
+                children: { type: "int", description: "One number" },
+              },
+              mixed: {
+                type: "array",
+                description: "Items of different types through children_options",
+                children_options: [
+                  { type: "string", description: "A label" },
+                  { type: "int", minimum: 0, maximum: 100, description: "A number" },
+                  { type: "bool", description: "A flag" },
+                ],
+              },
+            },
+          },
+
+          objects: {
+            type: "object",
+            description: "Declared children including keys that need pointer escaping",
+            additional_children: { type: "int", minimum: 0 },
+            key_pattern: "^[A-Za-z0-9./~_-]+$",
+            children: {
+              "dotted.key": { type: "int", description: "Addressed as /fixtures/objects/dotted.key" },
+              "with/slash": { type: "int", description: "Addressed as /fixtures/objects/with~1slash" },
+              "with~tilde": { type: "int", description: "Addressed as /fixtures/objects/with~0tilde" },
+              "0": { type: "string", description: "A numeric object key stays a key" },
+              nested: {
+                type: "object",
+                description: "Several declared levels",
+                children: {
+                  deeper: {
+                    type: "object",
+                    description: "Third level",
+                    children: {
+                      value: { type: "string", description: "Found at /fixtures/objects/nested/deeper/value" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+
+          dynamic: {
+            type: "object",
+            description: "Dynamic key collections",
+            children: {
+              restricted: {
+                type: "object",
+                description: "key_enum: the editor offers a chooser",
+                key_enum: ["alpha", "beta", "gamma"],
+                additional_children: { type: "int", description: "Counter" },
+              },
+              free_form: {
+                type: "object",
+                description: "key_pattern: the editor validates the typed key",
+                key_pattern: "^[a-z][a-z0-9_]*$",
+                additional_children: { type: "string", description: "Value" },
+              },
+            },
+          },
+
+          unions: {
+            type: "object",
+            description: "Values that may take more than one shape",
+            children: {
+              log_level: {
+                type: "union",
+                description: "Integer 0-7 or a named level",
+                children_options: [
+                  { type: "int", minimum: 0, maximum: 7, description: "Numeric level" },
+                  {
+                    type: "string",
+                    enum: ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"],
+                    description: "Named level",
+                  },
+                ],
+              },
+              target: {
+                type: "union",
+                description: "A host name or a host/port object",
+                children_options: [
+                  { type: "string", min_length: 1, description: "Host name" },
+                  {
+                    type: "object",
+                    description: "Explicit target",
+                    children: {
+                      host: { type: "string", min_length: 1, description: "Host name" },
+                      port: { type: "int", minimum: 1, maximum: 65535, description: "TCP port" },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+
+          apply_policy: {
+            type: "object",
+            description: "One field per application policy level",
+            children: {
+              live_field: {
+                type: "string",
+                apply: "live",
+                description: "Changing it reports applied",
+              },
+              reload_field: {
+                type: "string",
+                apply: "reload",
+                description: "Changing it reports reload required",
+              },
+              restart_field: {
+                type: "string",
+                apply: "restart",
+                description: "Changing it reports restart required",
+              },
+            },
+          },
+
+          secrets: {
+            type: "object",
+            description: "Sensitive fixture subtree",
+            children: {
+              password: {
+                type: "string",
+                secret: true,
+                description: "Hidden from the editor without settings_read_secret",
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}

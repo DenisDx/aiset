@@ -1,0 +1,142 @@
+// demo2 configuration example (demo2/config.json5.example).
+// run_demo2.sh copies this file to demo2/config.json5 only when it is absent.
+// Server settings come from environment placeholders: the descriptor declares
+// them with env conversion, so effective values are typed even though the
+// source is a placeholder string.
+
+{
+  // -- server --------------------------------------------------------
+  //AGENT: the bind address and port come from .env; override them per run
+  //       with --demo2.server.port:8384 on the command line. Clear either field
+  //       in the editor to see the placeholder the descriptor declares.
+  server: {
+    host: "${DEMO2_HOST:-0.0.0.0}",
+    port: ${DEMO2_PORT:-8383},
+  },
+
+  // -- runtime --------------------------------------------------------
+  runtime: {
+    // A non-zero value re-reads the document on that interval (0 = manual only).
+    reread_interval_seconds: 0,
+    log_level: "${DEMO2_LOG_LEVEL:-info}",
+  },
+
+  // -- AI assistant ---------------------------------------------------
+  // The model name lives in .env; this block only selects the provider.
+  ai: {
+    enabled: "${DEMO2_AI_ENABLED:-true}",
+    provider: {
+      type: "openai",
+      base_url: "${DEMO2_AI_BASE_URL:-http://127.0.0.1:11434/v1}",
+      // Secret placeholder: the resolved value never leaves the backend.
+      api_key: "${DEMO2_AI_API_KEY}",
+    },
+    model: "${DEMO2_AI_MODEL:-qwen3:8b}",
+    timeout_seconds: 60,
+    temperature: 0.2,
+    max_tool_rounds: 8,
+    // Every agent proposal is staged for the user; the model never writes.
+    require_change_confirmation: true,
+  },
+
+  // -- fixtures -------------------------------------------------------
+  // Fixture-only fields cover every declared shape and have no runtime effect.
+  fixtures: {
+    scalars: {
+      text: "hello demo2",
+      empty_text: "",
+      unicode_text: "значение — ünïcøde ✓",
+      multiline: "first line\nsecond line",
+      count: 3,
+      negative_count: -7,
+      ratio: 0.25,
+      enabled: true,
+      disabled: false,
+      explicit_null: null,
+    },
+
+    constraints: {
+      mode: "strict", // enum: strict | relaxed
+      fixed_version: "1.0", // const and read-only
+      code: "DEMO2", // pattern ^[A-Z0-9_]{3,16}$
+      bounded: 5, // minimum 0, maximum 10
+      named: "info", // min_length 3
+    },
+
+    optionality: {
+      required_field: "present",
+      nullable_field: null,
+      // absent_field and defaulted_field are intentionally missing from this
+      // file: the editor reports exists=false, and the effective default is
+      // shown separately instead of being written to the source.
+    },
+
+    environment: {
+      host: "${DEMO2_HOST:-0.0.0.0}",
+      port: ${DEMO2_PORT:-8383},
+      api_token: "${DEMO2_API_TOKEN:-}",
+    },
+
+    arrays: {
+      strings: ["alpha", "beta"],
+      integers: [1, 2, 3],
+      booleans: [true, false],
+      objects: [
+        {
+          //AGENT: ids stay unique; the editor can move and remove entries.
+          id: "first",
+          weight: 1.5,
+        },
+        {
+          id: "second",
+          weight: 2.5,
+        },
+      ],
+      nested: [[1, 2], [3]],
+      empty: [],
+      mixed: ["text", 7, true], // children_options
+    },
+
+    objects: {
+      //AGENT: these keys need JSON Pointer escaping when addressed.
+      "dotted.key": 1,
+      "with/slash": 2,
+      "with~tilde": 3,
+      "0": "numeric object key stays a key",
+      nested: {
+        deeper: {
+          value: "found",
+        },
+      },
+    },
+
+    dynamic: {
+      restricted: {
+        // key_enum: only these keys are accepted
+        alpha: 1,
+        beta: 2,
+      },
+      free_form: {
+        // key_pattern: ^[a-z][a-z0-9_]*$
+        first_key: "one",
+        second_key: "two",
+      },
+    },
+
+    unions: {
+      log_level: 3, // int 0-7 or a named level
+      target: "host", // string or { host, port }
+    },
+
+    apply_policy: {
+      live_field: "applied immediately",
+      reload_field: "re-read on reload",
+      restart_field: "requires a restart",
+    },
+
+    secrets: {
+      // Read and edit need explicit permissions; the editor hides the value.
+      password: "${DEMO2_FIXTURE_PASSWORD:-}",
+    },
+  },
+}

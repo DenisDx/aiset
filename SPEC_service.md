@@ -296,6 +296,9 @@ and an explicit application error, never a generic write failure.
 | POST | `{base}/value` | `set` |
 | POST | `{base}/load` | `load` |
 | POST | `{base}/load/lkg` | `load_lkg` |
+| GET | `{base}/tree?document=&path=&view=source` | `tree` (section 19) |
+| POST | `{base}/operations/validate` | `apply_operations(dry_run=True)` (section 20) |
+| POST | `{base}/operations` | `apply_operations` (section 20) |
 | POST | `{base}/descriptor/validate` | `validate_descriptor` (development) |
 
 `POST` body for `validate` and `set`:
@@ -497,7 +500,8 @@ files and inserts the returned fragment.
 |---|---|
 | `include_assets()` | an HTML string that includes the library's JS/CSS assets |
 | `render_node_editor(document, path)` | an HTML fragment editing one node/subtree |
-| `render_full_editor(document)` | an HTML fragment editing the whole document |
+| `render_full_editor(document)` | an HTML fragment editing the whole document (the generated tree editor, section 21) |
+| `render_tree_editor(document, options=None)` | an HTML fragment of the generated tree editor |
 
 The helpers take a document ID (and, where applicable, a JSON Pointer path) and
 an API base URL or transport callbacks supplied by the host. They use the same
@@ -511,7 +515,226 @@ HTTP contract (section 10) and perform only optional best-effort browser checks
   (SPEC_.md section 9).
 - Effective snapshots are immutable and isolated from caller mutation.
 
-## 19. Maintenance and change control
+## 19. Tree snapshots
+
+One consistent, authorized snapshot of a subtree, so a generated editor renders
+the whole document from a single revision instead of issuing one request per
+node (proposal `proposal_demo2.md` section 8.1).
+
+```python
+service.tree(document_id, path="", *, view="source", principal) -> dict
+```
+
+HTTP:
+
+```http
+GET {base}/tree?document=main&path=&view=source
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "document": "main",
+  "path": "",
+  "view": "source",
+  "exists": true,
+  "revision": "opaque-source-revision",
+  "descriptor_revision": "opaque-descriptor-revision",
+  "invalid_on_disk": false,
+  "loaded_from": "file",
+  "node": { "...": "recursive node" }
+}
+```
+
+Each node carries:
+
+| Field | Meaning |
+|---|---|
+| `path` | JSON Pointer of the node |
+| `exists` | `false` for an absent permitted optional leaf |
+| `value_text` | Exact source fragment, or `null` |
+| `effective` | Resolved value when `view=effective` |
+| `origin` | `file`, `environment` (with `variable`), `default`, or `absent` |
+| `default_applied` | `true` when an effective default is shown |
+| `type`, `apply`, `field` | Descriptor metadata; `field` is the authorized node description |
+| `access_denied` | `true` for a secret node the principal may not read; its values are omitted, never redacted |
+| `kind` | `object`, `dynamic_key`, `array_item`, `leaf`, or `undeclared` |
+| `capabilities` | `edit`, `add`, `remove`, `reorder`, `add_child`, `remove_child`, `key_options`, `key_pattern` |
+| `kind` | `array`, `array_item`, `object`, `dynamic_key`, `leaf` or `undeclared` |
+| `comments` | Comments of the source file that introduce the node, markers removed; decorative section rules are dropped |
+| `template` | `name` and inline `default` of a stored `${VAR}` / `${VAR:-default}`; absent for a plain value |
+
+`kind` is decided by the parent, not by the node type: a string inside an array
+is an `array_item`, because `remove` and `move` address the item path itself.
+`remove` and `reorder` therefore belong to the item, and an item of a
+`read_only` array carries neither.
+
+The editor shows `comments` and `field` in the tooltip of the node name: the
+source comments first, then the descriptor description, the flags (`required`,
+`nullable`, `read_only`, `secret`), the apply policy, the environment
+conversion, the default, the constraints and the value as written. A node whose
+`field.default` is declared also gets a small button that stages that default;
+the button is disabled while the stored value already is the default.
+| `children`, `items` | Recursive nodes for objects and arrays |
+| `additional_child` | Field description of dynamic values, used to create a property |
+
+The snapshot is consistent with one source and one descriptor revision; a
+secret subtree is reported as `access_denied` without values, while the
+single-value `get` API still denies such a fragment entirely (section 5).
+
+## 20. Atomic structural operations
+
+One batch of structural operations, applied to a single in-memory candidate and
+committed as one durable write. This is a staged user batch, not a transaction
+system: there are no partial commits and no rollback log (see `SPEC_.md`
+Correction 1).
+
+```python
+service.apply_operations(document_id, operations, *,
+                         expected_revision, expected_descriptor_revision,
+                         principal, dry_run=False) -> OperationsResult
+```
+
+Operation shapes:
+
+```json
+{"op": "set",    "path": "/server/port", "value_text": "8384"}
+{"op": "add",    "path": "/fixtures/tags/-", "value_text": "\"new\""}
+{"op": "add",    "path": "/fixtures/dynamic/new_key", "value_text": "1"}
+{"op": "remove", "path": "/fixtures/tags/1"}
+{"op": "move",   "from": "/fixtures/items/2", "path": "/fixtures/items/0"}
+```
+
+HTTP:
+
+```http
+POST {base}/operations/validate
+POST {base}/operations
+```
+
+Request body for both routes:
+
+```json
+{
+  "document": "main",
+  "operations": [{"op": "set", "path": "/server/port", "value_text": "8384"}],
+  "expected_revision": "opaque-source-revision",
+  "expected_descriptor_revision": "opaque-descriptor-revision"
+}
+```
+
+Rules:
+
+- `add` on an array uses the `-` append token; `add` on an object names a key
+  the descriptor permits (`children` entry, `additional_children`,
+  `key_enum`, `key_pattern`).
+- `remove` is refused for required, `const`, and `read_only` nodes and for fixed
+  declared children of an object without `additional_children`.
+- `move` takes an array item to another index, carrying its comments with it.
+- Every affected path is authorized (secret and read-only descendants included)
+  and validated before anything is written.
+- Operations are applied in order to one candidate document; the first failure
+  aborts the batch and the file stays byte-for-byte unchanged.
+- `apply_operations(..., dry_run=True)` requires only `settings_validate` and
+  returns the issues without writing. `dry_run: true` marks the response.
+
+Result:
+
+```json
+{
+  "ok": true,
+  "document": "main",
+  "valid": true,
+  "dry_run": false,
+  "stored": true,
+  "operations": [{"op": "set", "path": "/server/port", "value_text": "8384"}],
+  "issues": [],
+  "revision": "new-source-revision",
+  "descriptor_revision": "opaque-descriptor-revision",
+  "application": {"state": "reload_required", "active_revision": "previous-active-revision"},
+  "changed_paths": ["/server/port"]
+}
+```
+
+An invalid committed batch raises `VALIDATION_ERROR` (HTTP 422) with the shared
+issue list and writes nothing; permission failures keep their own status
+(`FORBIDDEN`, `SECRET_ACCESS_DENIED`), and stale revisions return
+`REVISION_CONFLICT` as for single-value writes. Backup, audit, callback,
+application-state and subscription semantics are identical to `set`.
+
+## 21. UI asset API for generated editors
+
+The shipped assets add a generated tree editor. The host integration stays two
+lines; see `proposal_demo2.md` section 7.1.
+
+| Helper | Responsibility |
+|---|---|
+| `renderTreeEditor(document, options)` | Return the complete tree-editor host fragment |
+| `mountTree(target, options)` | Mount one editor and return its instance |
+| `instance.getPendingOperations()` | Copy of the staged operations |
+| `instance.stageOperations(operations, source)` | Stage user or agent operations |
+| `instance.validatePending()` | Validate the complete staged batch |
+| `instance.applyPending()` | Validate and commit the batch |
+| `instance.reload()` | Re-read and re-render from the server |
+| `instance.revert(path)` | Drop staged operations for one path |
+| `instance.expandAll()` | Open every composite section of the snapshot |
+| `instance.collapseAll()` | Close every section; the document root stays open |
+| `instance.isExpanded(path)` | Whether one path is currently open |
+| `instance.setValuesAsText(flag)` | Show or hide the stored text of objects and arrays |
+| `instance.getValuesAsText()` | Read the current text representation |
+| `instance.setShowAbsent(flag)` | Show or hide keys the descriptor allows but the file does not contain |
+| `instance.getShowAbsent()` | Read the current absent-key representation |
+| `instance.on(event, handler)` | `loaded`, `staged`, `validated`, `applied`, `status`, `lifecycle`, `viewchange` |
+
+```js
+aiset.mountTree("#settings-tree", { document: "demo2", apiBase: "/api/settings" });
+```
+
+```python
+from aiset.assets import render_tree_editor
+page = render_tree_editor("demo2")
+```
+
+`options.lifecycle` adds host buttons (for example Reload and Restart) that POST
+to a host route; the editor never restarts a process itself. The editor itself
+offers **Expand all** and **Collapse all** in its toolbar; `options.viewButtons:
+false` suppresses them when the host renders its own toolbar.
+
+A node can also be edited as raw source: the mode replaces the subtree of that
+node with a textarea holding the stored fragment, and leaving it stages one
+`set` operation only after the server accepted it; otherwise the server issues
+are shown and nothing is staged (SPEC_.md correction 4).
+
+A node whose stored value is a placeholder renders two controls: the variable
+name and the inline fallback, the latter with the control of the declared type.
+Editing either rewrites the token instead of dropping the substitution, and an
+empty name stores the inline value again. A node whose descriptor sets
+`env.allowed` also offers a button that switches it into that mode. The tree
+snapshot never carries an environment value: `POST <base>/env` with
+`{"document": ..., "names": [...]}` answers which variables are set and nothing
+more.
+
+An object or an array is edited through its children, never as a single value,
+so no composite value control is rendered. `options.showAbsent` (default
+`false`) and `instance.setShowAbsent()` decide whether the declared keys that the
+file does not contain are rendered; they carry `exists: false` and the usual
+`default` or `absent` badge. A leaf with nothing to show (an unwritten
+read-only node) renders a coloured type mark instead of an empty control:
+`i` for `int`, `n` for `number`, `"` for `string`, `b` for `bool` and `?` for any
+other type; red is never used. `options.valuesAsText` (default
+`false`) and `instance.setValuesAsText()` add the stored source fragment of each
+composite node as a read-only `pre.aiset-tree-source` block. Structural actions
+(add, remove, reorder, explicit null) are square icon buttons that carry no text
+and explain themselves through the button `title`, which browsers also show on a
+long press. Every mounted
+instance owns its document, revisions, staged operations and status: no mutable
+state is shared between instances through module globals. `renderFullEditor()`
+is the generated tree editor; `renderNodeEditor()` remains the single path/value
+editor of section 17.
+
+## 22. Maintenance and change control
 
 - This document is the authoritative interface specification for aiset. It is
   kept in sync with the implementation and with SPEC_.md as the project evolves.
@@ -521,5 +744,7 @@ HTTP contract (section 10) and perform only optional best-effort browser checks
   security), the corresponding interface statements here are updated in the same
   change.
 - Interface versioning follows the release/API versioning decision recorded in
-  the discussion register of SPEC_.md section 16. Incompatible changes are
+  the discussion register of SPEC.md section 16. Incompatible changes are
   versioned and documented rather than applied silently.
+- Corrections to the protected `SPEC.md` are proposed in `SPEC_.md`; the
+  interfaces of sections 19-21 were added for `demo2` and are recorded there.

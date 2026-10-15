@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 from .errors import CommentPreservationConflict, ParseError, PathError
-from .pointer import parse_pointer
+from .pointer import APPEND_MARKER, parse_pointer
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?\}")
@@ -145,6 +145,7 @@ class Item:
     node: Node
     leading: list[Comment] = field(default_factory=list)
     trailing: list[Comment] = field(default_factory=list)
+    comma_pos: int | None = None
 
     @property
     def commented(self) -> bool:
@@ -354,12 +355,14 @@ class _Parser:
                 self.pos += 1
                 node.end = self.pos
                 return node
-            item = self.parse_value()
-            opening, item.opening_comments = item.opening_comments, []
+            value = self.parse_value()
+            opening, value.opening_comments = value.opening_comments, []
+            comma_pos = None
             if self.peek() == ",":
+                comma_pos = self.pos
                 self.pos += 1
             trailing = opening + self.take_same_line_comments()
-            node.items.append(Item(item, pending, trailing))
+            node.items.append(Item(value, pending, trailing, comma_pos))
 
     def parse_key(self) -> tuple[str, int, int, str]:
         char = self.peek()
@@ -623,6 +626,160 @@ class Document:
             return self._replace_node(item.node, fragment, trivia, pointer)
         raise PathError(f"Path {pointer!r} does not address a container")
 
+    # -- structural edits ------------------------------------------------
+    def apply_add(self, pointer: str, value_text: str) -> str:
+        """Append an array item (`-` token) or create a permitted object key."""
+        tokens = parse_pointer(pointer, allow_append=True)
+        if not tokens:
+            raise PathError("The root pointer is read-only")
+        fragment = parse_fragment(value_text)
+        if tokens[-1] == APPEND_MARKER:
+            container = self.find("/".join(pointer.split("/")[:-1]))
+            if not isinstance(container, ArrayNode):
+                raise PathError("The append token '-' requires an array")
+            return self._append_item(container, fragment)
+        parent = self.find("/".join(pointer.split("/")[:-1]))
+        if not isinstance(parent, ObjectNode):
+            raise PathError(f"Path {pointer!r} does not address an object")
+        return self._create_member(parent, tokens[-1], fragment)
+
+    def apply_remove(self, pointer: str) -> str:
+        """Remove one array item or one object property with its own comments."""
+        parent, token = self.find_parent(pointer)
+        if isinstance(parent, ArrayNode):
+            index = self._array_index(parent, token, pointer)
+            item = parent.items[index]
+            start = _line_start(
+                self.text, item.leading[0].start if item.leading else item.node.start
+            )
+            end = _item_end(item)
+            last = index == len(parent.items) - 1
+            if last and len(parent.items) > 1:
+                # The preceding separator is the one that disappears with the item.
+                start = _absorb_previous_separator(self.text, start, parent.start)
+                return self._splice(start, end, "")
+            if item.comma_pos is not None:
+                end = item.comma_pos + 1
+            elif not last:
+                end = _after_comma(self.text, end)
+            start, end = _tidy_inline(self.text, start, end)
+            return self._splice(start, _extend_line(self.text, end), "")
+        if isinstance(parent, ObjectNode):
+            member = parent.member(token)
+            if member is None:
+                raise PathError(f"Missing object key {token!r}")
+            start = _line_start(
+                self.text, member.leading[0].start if member.leading else member.key_start
+            )
+            end = _member_end(member)
+            position = index_of_member(parent, token)
+            last = position == len(parent.members) - 1
+            if last and len(parent.members) > 1:
+                start = _absorb_previous_separator(self.text, start, parent.start)
+                return self._splice(start, end, "")
+            if member.comma_pos is not None:
+                end = member.comma_pos + 1
+            elif not last:
+                end = _after_comma(self.text, end)
+            start, end = _tidy_inline(self.text, start, end)
+            return self._splice(start, _extend_line(self.text, end), "")
+        raise PathError(f"Path {pointer!r} does not address a container")
+
+    def apply_move(self, source: str, target: str) -> str:
+        """Move one array item, taking its attached comments with it."""
+        parent_pointer, token = self.find_parent(source)
+        if not isinstance(parent_pointer, ArrayNode):
+            raise PathError("Only array items can be moved")
+        index = self._array_index(parent_pointer, token, source)
+        _, target_token = self.find_parent(target)
+        position = self._array_index(parent_pointer, target_token, target, allow_end=True)
+        blocks = [block_of(self, entry) for entry in parent_pointer.items]
+        moved = blocks.pop(index)
+        blocks.insert(position, moved)
+        remaining = blocks
+
+        base_indent = self.base_indent_at(parent_pointer.start)
+        unit = self._indent_unit(parent_pointer)
+        body = self._render_array_body(parent_pointer, remaining, base_indent, unit)
+        return self._splice(parent_pointer.start, parent_pointer.end, body)
+
+    def _array_index(
+        self, parent: ArrayNode, token: str, pointer: str, *, allow_end: bool = False
+    ) -> int:
+        if not token.isdigit():
+            raise PathError(f"Array index expected, got {token!r} in {pointer!r}")
+        index = int(token)
+        limit = len(parent.items) + (1 if allow_end else 0)
+        if index >= limit:
+            raise PathError(f"Array index out of range in {pointer!r}")
+        return index
+
+    def _append_item(self, parent: ArrayNode, fragment: "Document") -> str:
+        """Append one item using the array's own layout and comma style."""
+        base_indent = self.base_indent_at(parent.start)
+        unit = self._indent_unit(parent)
+        multiline = "\n" in self.source_of(parent)
+        block = reindent(fragment.source_of(fragment.root), base_indent + unit)
+        if not multiline:
+            if not parent.items:
+                return self._splice(parent.start + 1, parent.end - 1, block)
+            at = _before_close(parent)
+            return self._splice(at, at, f", {block}")
+        entry_indent = _inner_indent(self, parent, base_indent, unit)
+        keep_comma = bool(parent.items) and _has_trailing_comma(
+            self.text, _item_end(parent.items[-1])
+        )
+        entry = entry_indent + block
+        if not parent.items:
+            at = _after_open(parent)
+            return self._splice(at, at, "\n" + entry + ("," if keep_comma else ""))
+        last = parent.items[-1]
+        if last.comma_pos is not None:
+            # Insert after the item and its comments so trailing trivia stays put.
+            at = max(last.comma_pos + 1, _item_end(last))
+            return self._splice(at, at, "\n" + entry + ",")
+        at = _item_end(last)
+        return self._splice(at, at, ",\n" + entry)
+
+    def _render_array_body(
+        self, parent: ArrayNode, blocks: list[tuple[str, int | None]], base_indent: str, unit: str
+    ) -> str:
+        keep_comma = bool(parent.items) and _has_trailing_comma(
+            self.text, _item_end(parent.items[-1])
+        )
+        if not blocks:
+            return "[]" if not parent.opening_comments and not parent.block_end else self._render_array_tail(parent, base_indent)
+        if "\n" not in self.source_of(parent):
+            # An inline array keeps its inline layout.
+            last_index = len(blocks) - 1
+            parts = [
+                _with_separator(block, keep_comma and index == last_index)
+                for index, block in enumerate(blocks)
+            ]
+            opening = (" ".join(c.text for c in parent.opening_comments) + " ") if parent.opening_comments else ""
+            tail = (" " + " ".join(c.text for c in parent.block_end)) if parent.block_end else ""
+            return "[" + opening + ", ".join(parts) + tail + "]"
+        entry_indent = _inner_indent(self, parent, base_indent, unit)
+        lines = ["["]
+        if parent.opening_comments:
+            lines[-1] += " " + " ".join(c.text for c in parent.opening_comments)
+        for index, block in enumerate(blocks):
+            last = index == len(blocks) - 1
+            rendered = _with_separator(block, keep_comma or not last)
+            lines.append("\n".join(entry_indent + line for line in rendered.split("\n")))
+        for comment in parent.block_end:
+            lines.append(entry_indent + comment.text)
+        lines.append(base_indent + "]")
+        return "\n".join(lines)
+
+    def _render_array_tail(self, parent: ArrayNode, base_indent: str) -> str:
+        entry_indent = base_indent + self._indent_unit(parent)
+        lines = ["["]
+        for comment in parent.block_end:
+            lines.append(entry_indent + comment.text)
+        lines.append(base_indent + "]")
+        return "\n".join(lines)
+
     # -- edit helpers ----------------------------------------------------
     def _replace_node(
         self, old: Node, fragment: "Document", trivia: list[Comment], pointer: str
@@ -759,7 +916,8 @@ class Document:
             if last.comma_pos is None:
                 at = _member_end(last)
                 return self._splice(at, at, ",\n" + entry)
-            at = last.comma_pos + 1
+            # Insert after the member and its comments so trailing trivia stays put.
+            at = max(last.comma_pos + 1, _member_end(last))
             return self._splice(at, at, "\n" + entry + ",")
         entry = f"{key_text}: {value_text}"
         if not parent.members:
@@ -857,6 +1015,89 @@ def _before_close(parent: ObjectNode) -> int:
     return close
 
 
+def _item_end(item: Item) -> int:
+    offset = item.node.end
+    for comment in item.trailing:
+        offset = max(offset, comment.end)
+    return offset
+
+
+def index_of_member(parent: ObjectNode, token: str) -> int:
+    for index, member in enumerate(parent.members):
+        if member.label == token:
+            return index
+    return -1
+
+
+def block_of(document: "Document", item: Item) -> tuple[str, str]:
+    """Split one array item into (value source, trailing comments).
+
+    The item's own comma is excluded, so a rebuilt array can place the
+    separator after the value and before any trailing comment.
+    """
+    start = item.leading[0].start if item.leading else item.node.start
+    value = deindent(document.text[start : item.node.end], len(document.base_indent_at(start)))
+    comments = "".join(f" {comment.text}" for comment in item.trailing)
+    return value, comments
+
+
+def _with_separator(block: tuple[str, str], needed: bool) -> str:
+    """Assemble one item: value, then the separator, then its trailing comments."""
+    value, comments = block
+    return value + ("," if needed else "") + comments
+
+
+def _line_start(text: str, offset: int) -> int:
+    """Start of the line when only whitespace precedes offset, else offset."""
+    line_start = text.rfind("\n", 0, offset) + 1
+    return line_start if text[line_start:offset].strip() == "" else offset
+
+
+def _absorb_previous_separator(text: str, start: int, container_start: int) -> int:
+    """Use the comma before a removed last item instead of leaving a gap."""
+    position = text.rfind(",", container_start, start)
+    if position < 0:
+        return start
+    return _absorb_previous_space(text, position)
+
+
+def _tidy_inline(text: str, start: int, end: int) -> tuple[int, int]:
+    """Drop the separator space an inline removal leaves behind."""
+    start = _absorb_previous_space(text, start)
+    if text[end : end + 1] == " " and start > 0 and text[start - 1 : start] in ("[", ","):
+        end += 1
+    return start, end
+
+
+def _absorb_previous_space(text: str, start: int) -> int:
+    """Remove the separator space left behind by an inline removal."""
+    if start <= 0 or text[start - 1] != " ":
+        return start
+    previous = text[start - 2] if start >= 2 else ""
+    return start - 1 if previous in "[," else start
+
+
+def _extend_line(text: str, offset: int) -> int:
+    """Swallow the rest of the line when only whitespace follows offset."""
+    newline = text.find("\n", offset)
+    if newline >= 0 and text[offset:newline].strip() == "":
+        return newline + 1
+    return offset
+
+
+def _has_trailing_comma(text: str, offset: int) -> bool:
+    return _after_comma(text, offset) > offset
+
+
+def _after_comma(text: str, offset: int) -> int:
+    probe = offset
+    while probe < len(text) and text[probe] in " \t":
+        probe += 1
+    if probe < len(text) and text[probe] == ",":
+        return probe + 1
+    return offset
+
+
 def _member_end(member: Member) -> int:
     offset = member.node.end
     for comment in member.trailing:
@@ -868,12 +1109,16 @@ def _member_start(member: Member) -> int:
     return member.leading[0].start if member.leading else member.key_start
 
 
-def _inner_indent(document: Document, parent: ObjectNode, base_indent: str, unit: str) -> str:
-    if parent.members:
+def _inner_indent(document: Document, parent: "ObjectNode | ArrayNode", base_indent: str, unit: str) -> str:
+    """Indentation of the first child of a block, derived from the source."""
+    if isinstance(parent, ObjectNode) and parent.members:
         indent = document.base_indent_at(parent.members[0].key_start)
-        if indent:
-            return indent
-    return base_indent + unit
+    elif isinstance(parent, ArrayNode) and parent.items:
+        first = parent.items[0]
+        indent = document.base_indent_at(first.leading[0].start if first.leading else first.node.start)
+    else:
+        indent = ""
+    return indent or base_indent + unit
 
 
 def _member_lines(document: Document, member: Member, comma: str) -> list[str]:

@@ -17,8 +17,12 @@ def unescape_token(token: str) -> str:
     return token.replace("~1", "/").replace("~0", "~")
 
 
-def parse_pointer(pointer: str) -> list[str]:
-    """Split a JSON Pointer into unescaped tokens; "" is the root."""
+def parse_pointer(pointer: str, *, allow_append: bool = False) -> list[str]:
+    """Split a JSON Pointer into unescaped tokens; "" is the root.
+
+    The array append token "-" is rejected by default; structural add operations
+    pass `allow_append=True` because they address a new last item.
+    """
     if not isinstance(pointer, str):
         raise PathError("Path must be a string")
     if pointer == "":
@@ -27,8 +31,8 @@ def parse_pointer(pointer: str) -> list[str]:
         raise PathError(f"Path must be empty or start with '/': {pointer!r}")
     tokens: list[str] = []
     for raw in pointer.split("/")[1:]:
-        if APPEND_MARKER in raw and raw == APPEND_MARKER:
-            raise PathError("Array append marker '-' is not supported in v1")
+        if raw == APPEND_MARKER and not allow_append:
+            raise PathError("Array append marker '-' is not supported for this operation")
         index = 0
         out: list[str] = []
         while index < len(raw):

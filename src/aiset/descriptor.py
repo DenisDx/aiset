@@ -255,6 +255,8 @@ class Node:
                 out["env"]["convert"] = self.env_convert
         if self.children:
             out["children"] = {name: node.describe() for name, node in self.children.items()}
+        if self.option_nodes:
+            out["children_options"] = [option.describe() for option in self.option_nodes]
         if self.additional_children is not None:
             out["additional_children"] = self.additional_children.describe()
         if self.key_pattern:
@@ -1125,12 +1127,15 @@ def node_at(descriptor: "CompiledDescriptor | Node", pointer: str) -> Node | Non
 
 
 def _array_item_node(node: Node, token: str) -> Node | None:
-    """Array item nodes are positional; identity-based editing is a later phase."""
+    """Array item nodes are positional; identity-based editing is a later phase.
+
+    A `children_options` array may hold more items than options; the first
+    option is then the structural hint for the editor, while validation still
+    accepts any alternative.
+    """
     if not token.isdigit() or (token != "0" and token.startswith("0")):
         return None
     if node.option_nodes is not None:
-        index = int(token)
-        if index >= len(node.option_nodes):
-            return None
-        return node.option_nodes[index]
+        index = min(int(token), len(node.option_nodes) - 1)
+        return node.option_nodes[index] if node.option_nodes else None
     return node.item_node

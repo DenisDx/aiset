@@ -13,6 +13,7 @@ import hashlib
 import inspect
 import json
 import logging
+import re
 import threading
 import dataclasses
 from dataclasses import dataclass
@@ -64,6 +65,8 @@ PERMISSIONS = (
 )
 
 APPLY_ORDER = {"live": 0, "reload": 1, "restart": 2}
+# A presence query is a diagnostic, not a bulk export of the environment.
+MAX_ENV_NAMES = 64
 BOM = "﻿"
 
 
@@ -613,6 +616,237 @@ class Service:
             active_revision=state.active_revision,
         )
 
+    def tree(
+        self, document_id: str, path: str = "", *, view: str = "source", principal: Principal
+    ) -> dict[str, Any]:
+        """One consistent, authorized snapshot for a generated editor."""
+        from .tree import build_tree
+
+        if view not in ("source", "effective"):
+            raise BadRequest("view must be 'source' or 'effective'")
+        self._require(
+            principal, "settings_read_source" if view == "source" else "settings_read_effective"
+        )
+        state = self._state(document_id)
+        if path:
+            self._node_for(state.registration, path, required=True)
+        return build_tree(
+            state,
+            path,
+            view=view,
+            can_read_secret=principal.has("settings_read_secret"),
+            limits=self.settings.limits,
+        )
+
+    def env_status(self, document_id: str, names: Sequence[str], *, principal: Principal) -> dict[str, bool]:
+        """Which environment variables are set, without ever exposing a value.
+
+        The editor shows this next to a ${VAR} control so the user knows whether
+        the file or the inline fallback decides the effective value.
+        """
+        self._require(principal, "settings_read_source")
+        state = self._state(document_id)
+        self._node_for(state.registration, "", required=True)
+        cleaned = [str(name) for name in names if isinstance(name, str)][:MAX_ENV_NAMES]
+        if not cleaned:
+            raise BadRequest("At least one variable name is required")
+        return state.registration.resolver.presence(cleaned)
+
+    def apply_operations(
+        self,
+        document_id: str,
+        operations: Sequence[dict[str, Any]],
+        *,
+        expected_revision: str | None,
+        expected_descriptor_revision: str | None,
+        principal: Principal,
+        dry_run: bool = False,
+    ) -> OperationsResult:  # noqa: D401
+        """Apply one batch of structural operations atomically (SPEC_service.md 21).
+
+        Validation is all-or-nothing: if one operation fails, nothing is written.
+        """
+        permission = "settings_validate" if dry_run else "settings_write"
+        self._require(principal, permission)
+        state = self._state(document_id)
+        self._check_revisions(state, expected_revision, expected_descriptor_revision)
+        operations = [dict(item) for item in operations]
+        if not operations:
+            raise BadRequest("At least one operation is required")
+        candidate_text, issues = self._apply_to_candidate(state, operations, principal)
+        errors = [issue for issue in issues if issue.severity == "error"]
+        result = OperationsResult(
+            document=document_id,
+            valid=not errors,
+            operations=operations,
+            issues=issues,
+            revision=state.revision,
+            descriptor_revision=state.registration.descriptor.revision,
+            dry_run=dry_run,
+        )
+        if dry_run:
+            result.issues = issues
+            return result
+        if errors:
+            raise ValidationError(
+                "Staged operations are invalid",
+                issues=[issue.to_dict() for issue in errors],
+            )
+
+        previous_state = state
+        changed_paths = self._batch_changed_paths(state, candidate_text, operations)
+        self._probe(previous_state, candidate_text, changed_paths)
+
+        with state.registration.store.lock():
+            data, current_revision, current_text = state.registration.store.read()
+            if current_revision != state.revision:
+                raise RevisionConflict(
+                    "The document changed on disk; re-read before saving",
+                    detail=f"disk={current_revision} client={state.revision}",
+                )
+            payload = encode(candidate_text, current_text.startswith(BOM))
+            candidate = Document(candidate_text, origin=state.registration.store.path.name)
+            self._revalidate_locked(state, candidate, principal)
+            report = state.registration.store.write_locked(payload, audit=self._audit)
+            if not report.committed:
+                raise StorageError("The document could not be persisted", detail=report.detail)
+
+        new_state = self._adopt(state, payload)
+        application_state = self._apply_change(previous_state, new_state, changed_paths)
+        self._notify(previous_state, new_state, changed_paths, application_state)
+        self._audit(
+            "operations",
+            {
+                "document": document_id,
+                "operations": [item.get("op") for item in operations],
+                "revision": new_state.revision,
+                "application": application_state,
+            },
+        )
+        result.stored = True
+        result.application_state = application_state
+        result.active_revision = new_state.active_revision
+        result.changed_paths = changed_paths
+        result.revision = new_state.revision
+        return result
+
+    def _apply_to_candidate(
+        self, state: DocumentState, operations: Sequence[dict[str, Any]], principal: Principal
+    ) -> tuple[str, list[ValueIssue]]:
+        """Run every operation against one in-memory candidate document."""
+        registration = state.registration
+        issues: list[ValueIssue] = []
+        text = state.text
+        for position, operation in enumerate(operations):
+            op = str(operation.get("op") or "")
+            target = str(operation.get("path") or "")
+            try:
+                if op == "set":
+                    value = operation.get("value_text")
+                    self._check_operation(state, text, target, "set", value, principal)
+                    text = Document(text, origin=registration.store.path.name).apply_set(target, value)
+                elif op == "add":
+                    value = operation.get("value_text")
+                    self._check_operation(state, text, target, "add", value, principal)
+                    text = Document(text, origin=registration.store.path.name).apply_add(target, value)
+                elif op == "remove":
+                    self._check_operation(state, text, target, "remove", None, principal)
+                    text = Document(text, origin=registration.store.path.name).apply_remove(target)
+                elif op == "move":
+                    source = str(operation.get("from") or "")
+                    self._check_operation(state, text, source, "move", None, principal)
+                    self._check_operation(state, text, target, "move_index", None, principal)
+                    text = Document(text, origin=registration.store.path.name).apply_move(source, target)
+                else:
+                    raise BadRequest(f"Unknown operation {op!r}")
+            except (Forbidden, SecretAccessDenied, Unauthorized):
+                raise
+            except AisetError as exc:
+                issues.append(
+                    ValueIssue(
+                        target or str(operation.get("from") or ""),
+                        "operation",
+                        f"Operation {position + 1} ({op}) failed: {exc.message}",
+                    )
+                )
+                return state.text, issues
+        try:
+            candidate = Document(text, origin=registration.store.path.name)
+            stored = candidate.stored_value(candidate.root)
+        except AisetError as exc:
+            return state.text, [ValueIssue("", "parse", str(exc))]
+        limit_issues = check_limits(stored, self.settings.limits)
+        if limit_issues:
+            return text, limit_issues
+        issues.extend(self._validate_stored(registration, stored, candidate))
+        return text, issues
+
+    def _check_operation(
+        self,
+        state: DocumentState,
+        text: str,
+        pointer: str,
+        op: str,
+        value_text: Any,
+        principal: Principal,
+    ) -> None:
+        """Authorize one operation path against the descriptor and permissions."""
+        document = Document(text, origin=state.registration.store.path.name)
+        if op == "add" and pointer.endswith("/-"):
+            pointer = pointer[:-2]
+        elif pointer.endswith("/-"):
+            raise BadRequest("The append token is only valid for an add operation")
+        parent_pointer, token = "", pointer
+        if pointer:
+            parent_pointer, _, token = pointer.rpartition("/")
+            parent_pointer = parent_pointer or ""
+        parent_node = self._node_for(state.registration, parent_pointer, required=False) if parent_pointer else state.registration.descriptor.root
+        if parent_node is None:
+            raise NotFound(f"Path {pointer!r} is not declared by the descriptor")
+        if op == "add":
+            if parent_node.type == "array":
+                return
+            if parent_node.type != "object":
+                raise BadRequest(f"Cannot add to {parent_node.type} at {pointer!r}")
+            existing = parent_node.children.get(token) if parent_node.children else None
+            if existing is None and parent_node.additional_children is None:
+                raise BadRequest(f"Key {token!r} is not permitted at {parent_pointer!r}")
+            if parent_node.key_enum and token not in parent_node.key_enum:
+                raise BadRequest(f"Key {token!r} is not in key_enum")
+            if parent_node.key_pattern and not re.match(parent_node.key_pattern, token):
+                raise BadRequest(f"Key {token!r} does not match key_pattern")
+            return
+        node = self._node_for(state.registration, pointer, required=False)
+        if node is None and parent_node.type == "array" and parent_node.option_nodes:
+            # An item beyond the declared options still has a permitted shape.
+            node = parent_node.option_nodes[0]
+        if node is None:
+            raise NotFound(f"Path {pointer!r} is not declared by the descriptor")
+        if op == "remove":
+            if node.required:
+                raise Forbidden(f"Path {pointer!r} is required and cannot be removed")
+            if node.read_only:
+                raise Forbidden(f"Path {pointer!r} is read-only")
+            if node.const is not None:
+                raise Forbidden(f"Path {pointer!r} has a fixed value")
+            if parent_node.children and token in parent_node.children and parent_node.additional_children is None:
+                raise Forbidden(f"Path {pointer!r} is a fixed declared child")
+        if op == "move" and parent_node.type != "array":
+            raise BadRequest("Only array items can be moved")
+        if op == "move_index" and parent_node.type != "array":
+            raise BadRequest("A move target must be an array index")
+        if node.secret and op in ("set", "remove", "move") and not principal.has(
+            "settings_edit_secret"
+        ):
+            raise SecretAccessDenied(f"Path {pointer!r} is a secret subtree")
+        if op == "set":
+            existing = document.find(pointer)
+            if node.read_only and existing is not None:
+                if value_text is not None and document.value_text(existing) != value_text:
+                    raise Forbidden(f"Path {pointer!r} is read-only")
+        if value_text is not None and str(value_text).strip() == "":
+            raise BadRequest("value_text is required")
+
     # -- candidate pipeline ----------------------------------------------
     def _prepare(
         self, state: DocumentState, path: str, value_text: str, principal: Principal
@@ -1016,6 +1250,28 @@ class Service:
     def _creates(self, state: DocumentState, path: str) -> bool:
         return state.document.find(path) is None
 
+    def _batch_changed_paths(
+        self, state: DocumentState, candidate_text: str, operations: Sequence[dict[str, Any]]
+    ) -> list[str]:
+        """Changed paths of a batch: every operation target and its subtree."""
+        try:
+            candidate = Document(candidate_text, origin=state.registration.store.path.name)
+        except AisetError:  # pragma: no cover - defensive
+            return []
+        touched: set[str] = set()
+        for operation in operations:
+            for key in ("path", "from"):
+                pointer = operation.get(key)
+                if not isinstance(pointer, str):
+                    continue
+                if pointer.endswith("/-"):
+                    # An appended item changes the container, so report it too.
+                    pointer = pointer[:-2]
+                base = pointer.rstrip("/")
+                touched.update(state.document.paths(base))
+                touched.update(candidate.paths(base))
+        return sorted(touched)
+
     def _changed_paths(self, state: DocumentState, candidate_text: str, pointer: str) -> list[str]:
         """Every pointer present before or after the edit, at or below the target."""
         try:
@@ -1145,6 +1401,43 @@ class Service:
         if "error" in box:
             raise box["error"]
         return box.get("result")
+
+
+@dataclass
+class OperationsResult:
+    """Result of one staged batch of structural operations."""
+
+    document: str
+    valid: bool
+    operations: list[dict[str, Any]]
+    issues: list[ValueIssue]
+    revision: str
+    descriptor_revision: str
+    stored: bool = False
+    application_state: str | None = None
+    active_revision: str | None = None
+    changed_paths: list[str] = dataclasses.field(default_factory=list)
+    dry_run: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "ok": True,
+            "document": self.document,
+            "valid": self.valid,
+            "dry_run": self.dry_run,
+            "operations": list(self.operations),
+            "issues": [issue.to_dict() for issue in self.issues],
+            "revision": self.revision,
+            "descriptor_revision": self.descriptor_revision,
+        }
+        if self.stored:
+            out["stored"] = True
+            out["application"] = {
+                "state": self.application_state,
+                "active_revision": self.active_revision,
+            }
+            out["changed_paths"] = list(self.changed_paths)
+        return out
 
 
 @dataclass

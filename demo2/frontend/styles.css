@@ -1,0 +1,248 @@
+/* demo2 host stylesheet (proposal_demo2.md section 6.2).
+   Layout and AIDIR-like theme only; tree behaviour comes from the aiset assets. */
+
+:root {
+  --bg: #0f1117;
+  --panel: #1a1d27;
+  --border: #2a2d3a;
+  --accent: #5b8af7;
+  --text: #d0d4e8;
+  --muted: #6b7090;
+  --ok: #4caf86;
+  --warn: #f0a500;
+  --err: #e05555;
+  --purple: #b48ef0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+.app-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.app-title strong { font-size: 16px; letter-spacing: 0.02em; }
+.app-subtitle { color: var(--muted); font-size: 12px; margin-left: 8px; }
+.app-meta { color: var(--muted); font-size: 12px; }
+
+.workspace {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 30%);
+  gap: 1px;
+  background: var(--border);
+  min-height: 0;
+}
+
+.pane { background: var(--bg); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+
+.pane-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex: 0 0 auto;
+}
+
+.pane-head h2 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); }
+.pane-note { color: var(--muted); font-size: 12px; }
+
+/* Each pane scrolls independently so a large configuration never moves the
+   chat input off screen (proposal section 6.2). */
+.pane-body { flex: 1 1 auto; overflow: auto; padding: 10px 12px; min-height: 0; }
+
+@media (max-width: 900px) {
+  .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); }
+  .pane-chat { border-top: 1px solid var(--border); }
+}
+
+/* -- tree editor ------------------------------------------------------ */
+.aiset-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  flex-wrap: wrap;
+}
+.aiset-tree-toggle {
+  width: 28px; height: 28px; min-width: 28px; padding: 0;
+  background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: 4px;
+  font-size: 16px; line-height: 1; display: inline-grid; place-items: center;
+}
+.aiset-tree-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.aiset-tree-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+.aiset-tree-node[data-absent="true"] .aiset-tree-name { color: var(--muted); font-style: italic; }
+
+/* Type marks for leaves with nothing to show; red is never used. */
+.aiset-tree-type {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px;
+  border: 1px solid currentColor; border-radius: 9px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1;
+}
+.aiset-tree-type.int, .aiset-tree-type.number { color: var(--ok); }
+.aiset-tree-type.string { color: var(--accent); }
+.aiset-tree-type.bool { color: var(--purple); }
+.aiset-tree-type.other { color: var(--muted); }
+.aiset-tree-desc { color: var(--muted); font-size: 12px; padding-left: 30px; margin-bottom: 2px; }
+.aiset-tree-children { padding-left: 22px; border-left: 1px solid var(--border); margin-left: 10px; }
+.aiset-tree-badge {
+  font-size: 11px; padding: 1px 6px; border-radius: 10px;
+  border: 1px solid var(--border); color: var(--muted);
+}
+.aiset-tree-badge.type { color: var(--accent); }
+.aiset-tree-badge.dirty { color: var(--warn); border-color: var(--warn); }
+.aiset-tree-badge.lock { color: var(--err); border-color: var(--err); }
+.aiset-tree-badge.origin, .aiset-tree-badge.env { color: var(--ok); }
+.aiset-tree-value input[type="text"], .aiset-tree-value input[type="number"],
+.aiset-tree-value textarea, .aiset-tree-value select, .aiset-tree-key {
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+}
+.aiset-tree-value textarea { min-width: 260px; }
+.aiset-tree-value input[type="text"], .aiset-tree-key { min-width: 140px; }
+.aiset-tree-value input[type="number"] { width: 96px; min-width: 96px; text-align: right; }
+.aiset-tree-value input[type="text"]:focus, .aiset-tree-value input[type="number"]:focus,
+.aiset-tree-value textarea:focus, .aiset-tree-value select:focus, .aiset-tree-key:focus {
+  outline: none; border-color: var(--accent); background: #1f2331;
+}
+.aiset-tree-value input[type="checkbox"], .pane-toggle input[type="checkbox"] {
+  accent-color: var(--accent); width: 14px; height: 14px; margin: 0; cursor: pointer;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.aiset-tree-value.readonly { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+.aiset-tree-secret { color: var(--err); font-size: 12px; }
+.aiset-tree-actions { display: inline-flex; align-items: center; gap: 2px; }
+.aiset-tree-action {
+  display: inline-grid; place-items: center;
+  width: 24px; height: 24px; min-width: 24px; padding: 0;
+  color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 4px;
+  cursor: pointer;
+}
+.aiset-tree-action:hover:not(:disabled) { color: var(--text); background: var(--panel); border-color: var(--border); }
+/* Caption buttons (.env, {..}, ↺) are pills: a short label does not fit a square. */
+.aiset-tree-action.pill {
+  width: auto; min-width: 0; height: 22px; padding: 0 7px;
+  border-color: var(--border); background: var(--panel);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.aiset-tree-action.pill .aiset-tree-icon-text { width: auto; }
+.aiset-tree-action.pill:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: #1f2331; }
+.aiset-tree-action:disabled { opacity: 0.4; cursor: default; }
+.aiset-tree-name { cursor: help; text-decoration: underline dotted transparent; }
+.aiset-tree-name:hover { text-decoration-color: var(--muted); }
+.aiset-tree-action .aiset-tree-icon { width: 14px; height: 14px; display: block; }
+/* A text label instead of a picture: smaller, bolder, dead centre. */
+.aiset-tree-action .aiset-tree-icon-text {
+  display: block; width: 100%; font-size: 9px; font-weight: 800; line-height: 1;
+  letter-spacing: -0.04em; text-align: center; text-indent: 0; color: inherit;
+}
+.aiset-tree-null { accent-color: var(--purple); width: 14px; height: 14px; margin: 0; vertical-align: middle; cursor: pointer; }
+.aiset-tree-value :disabled { opacity: 0.7; cursor: not-allowed; font-style: italic; }
+.aiset-tree-env {
+  width: 170px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.aiset-tree-template { display: inline-flex; align-items: center; gap: 6px; }
+/* A real button: it re-asks the server whether the variable is set. */
+.aiset-tree-env-state {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--muted); white-space: nowrap;
+  background: transparent; border: 1px solid var(--border); border-radius: 10px;
+  padding: 1px 8px; cursor: pointer;
+}
+.aiset-tree-env-state::before { content: "\2022"; }
+.aiset-tree-env-state:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.aiset-tree-env-state:disabled { opacity: 0.45; cursor: default; }
+.aiset-tree-env-state.on { color: var(--ok); border-color: var(--ok); }
+.aiset-tree-env-state.off { color: var(--muted); }
+.aiset-tree-raw {
+  margin: 4px 0 6px 30px; padding: 8px;
+  border: 1px solid var(--accent); border-radius: 4px; background: var(--panel);
+  box-sizing: border-box; width: fit-content; max-width: 100%;
+}
+.aiset-tree-raw-title { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+.aiset-tree-raw-text {
+  display: block; box-sizing: border-box; min-height: 120px; min-width: 260px; max-width: 100%;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
+  padding: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  line-height: 1.45; white-space: pre; overflow: auto;
+  /* both: the user may still drag the window to any size it needs */
+  resize: both;
+}
+.aiset-tree-raw-actions { display: flex; gap: 8px; margin-top: 6px; }
+.aiset-tree-raw-actions button {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 10px; cursor: pointer;
+}
+.aiset-tree-raw-actions button:hover { border-color: var(--accent); }
+.aiset-tree-source {
+  margin: 4px 0 6px 30px; padding: 6px 8px; max-height: 320px; overflow: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  white-space: pre; color: var(--text);
+}
+.pane-tools { display: flex; align-items: center; gap: 12px; }
+.pane-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--text); font-size: 12px; cursor: pointer; user-select: none;
+}
+.pane-toggle:hover { color: var(--accent); }
+
+.aiset-tree-actions button:not(.aiset-tree-action),
+.aiset-tree-toolbar button, .chat-actions button {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 3px 10px; cursor: pointer;
+}
+.aiset-tree-toolbar button:hover:not(:disabled), .chat-actions button:hover:not(:disabled) { border-color: var(--accent); }
+.aiset-tree-toolbar button:disabled { opacity: 0.5; cursor: default; }
+.aiset-tree-toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 0; flex-wrap: wrap; }
+.aiset-tree-status { padding: 4px 0; font-size: 12px; color: var(--muted); }
+.aiset-tree-status[data-state="ok"] { color: var(--ok); }
+.aiset-tree-status[data-state="error"] { color: var(--err); }
+.aiset-tree-status[data-state="pending"] { color: var(--warn); }
+.aiset-tree-issues { color: var(--err); font-size: 12px; margin: 4px 0; padding-left: 18px; }
+.aiset-tree-pending h4 { margin: 8px 0 4px; font-size: 12px; color: var(--warn); }
+.aiset-tree-staged { list-style: none; margin: 0; padding: 0; }
+.aiset-tree-staged-row { display: flex; gap: 8px; align-items: center; font-size: 12px; padding: 2px 0; }
+.aiset-tree-staged-path { font-family: ui-monospace, monospace; color: var(--warn); }
+.aiset-tree-staged-source { color: var(--muted); }
+
+/* -- chat ------------------------------------------------------------- */
+.chat-entry { margin-bottom: 10px; }
+.chat-role {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin-bottom: 2px;
+}
+.chat-entry.user .chat-body { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+.chat-entry.assistant .chat-body { white-space: pre-wrap; }
+.chat-entry.error .chat-body { color: var(--err); white-space: pre-wrap; }
+.chat-entry.tool .chat-body { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+.chat-entry.staged .chat-body { color: var(--ok); }
+.chat-input { border-top: 1px solid var(--border); background: var(--panel); padding: 8px 12px; flex: 0 0 auto; }
+.chat-input textarea {
+  width: 100%; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 6px; resize: vertical;
+  font-family: inherit; font-size: 13px;
+}
+.chat-actions { display: flex; gap: 8px; margin-top: 6px; }

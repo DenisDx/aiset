@@ -3,7 +3,9 @@
 ## Automated suite
 
 ```sh
-.venv/bin/python -m pytest          # 230 tests, about two seconds
+.venv/bin/python -m pytest          # 310 tests (library + demo2), about ten seconds
+.venv/bin/python -m pytest tests    # library suite only
+.venv/bin/python -m pytest demo2/tests   # demo2 host and assistant only
 ./test.sh                          # suite plus descriptor diagnostics
 ```
 
@@ -16,6 +18,9 @@
 | `tests/test_store.py` | Revisions, sidecar lock and timeout, atomic replacement, three write attempts with commit-state reporting, backup chain and once-per-session rotation, rollback, conflicted copies and retention, size limits, symlink policy, BOM/CRLF round trip. |
 | `tests/test_service.py` | Load/read/write pipeline, absent versus null versus default, source fragments with comments, permissions and secrets, read-only, revisions and conflicts, composite edits, changed paths, hooks refusal, callbacks (sync/async/timeout), subscriptions, descriptor views, LKG fallback and explicit LKG, external edits, rollback, restart persistence. |
 | `tests/test_http.py` | Route parity with Python, envelopes, status mapping (400/403/404/409/413/422/428/500), merge route, static frontend and assets, sanitized internal errors. |
+| `tests/test_tree_and_operations.py` | Tree snapshots (permissions, secrets, origins, capabilities), source-preserving append/remove/move, atomic batches and all-or-nothing rejection, HTTP parity. |
+| `tests/test_ui_assets.py` | Shipped assets: node syntax check, a headless smoke test of the public tree API with a DOM stub, Python-side fragment helpers, packaging. |
+| `demo2/tests/test_app.py` | Host startup, `.env` handling, launcher seeding without overwrite, host routes, lifecycle buttons, live bind-failure, and the assistant against a local fake provider (tool loop, staging, timeouts, malformed responses, secret exclusion). |
 | `tests/test_cli_and_demo.py` | Merge contract, Config object and mount grammar, `aiset validate-descriptor` exit codes and formats, demo seeding, overrides, non-writable state, bind failure, and an end-to-end run of the real UI and API on an ephemeral port. |
 
 ## Descriptor diagnostics
@@ -91,10 +96,43 @@ Start the demo and open `http://127.0.0.1:8383`:
 | Security | `test_service.py`, `test_http.py` (permissions, secrets, limits, sanitized errors) |
 | UI | Manual protocol steps 1-12 above |
 | Host compatibility | Deferred to M3; no host adapter is shipped in this repository |
+| Generated editor | `test_ui_assets.py` and the demo2 manual protocol |
+| Structural editing | `test_tree_and_operations.py`, `test_jsonsrc.py` |
+| Host acceptance | `demo2/tests/test_app.py` plus the demo2 manual protocol |
 | UI helpers, hooks | Deferred to M2/M4; hook-bound paths are refused with `UNSUPPORTED_CAPABILITY` |
+
+## demo2 manual acceptance (proposal_demo2.md section 12.2)
+
+```sh
+rm -f demo2/config.json5 demo2/.env
+./run_demo2.sh
+```
+
+1. Both local files are copied from their examples; change either and rerun,
+   neither is overwritten.
+2. Open `http://127.0.0.1:8383`: the AIDIR-styled split page appears with the
+   configuration tree on the left and the assistant on the right.
+3. Expand every fixture section; each declared type has its own control and the
+   root, sections and leaves carry descriptions.
+4. Add, remove and move array entries; add and remove permitted dynamic
+   properties (key chooser for `key_enum`, validated key for `key_pattern`).
+5. Stage several edits and press **Apply**: all appear in one persisted revision.
+6. Introduce one invalid edit in a batch: nothing is persisted.
+7. Edit the file externally and press **Reload**: the valid change appears.
+8. Stage a change, press **Reload**, cancel the confirmation: the staged change
+   remains.
+9. Change `fixtures.apply_policy.restart_field` and check the reported state is
+   `restart_required`.
+10. Press **Restart**: the page reconnects after the process re-executes and the
+    configuration persists.
+11. Ask the assistant to change a scalar and a collection; the proposals appear
+    as staged changes and are not written before **Apply**.
+12. Apply the assistant proposal: unrelated comments and formatting survive.
+13. Configure an unreachable provider: the chat shows an explicit error.
+14. Check that no response or page contains the configured AI key.
 
 ## Not claimed
 
-No MCP transport, no lifecycle-hook execution, no generated forms or helper
-micro-forms, no batch/delete/append/reordering operations, and no AI agent
-runtime exist yet. The suite passing does not claim them.
+No MCP transport, no lifecycle-hook execution, no helper micro-forms, no
+generated forms beyond the tree editor, no revision diff/approval, and no
+autonomous agent framework exist yet. The suite passing does not claim them.

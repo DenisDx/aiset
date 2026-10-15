@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<!-- demo2 host page (proposal_demo2.md section 6.2).
+     Unauthenticated internal test application: it says so on purpose. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>demo2 — aiset settings host</title>
+  <link rel="stylesheet" href="/assets/aiset.css">
+  <link rel="stylesheet" href="/styles.css">
+  <!-- defer keeps the dependency order and runs the scripts after parsing -->
+  <script src="/assets/aiset.js" defer></script>
+  <script src="/assets/aiset-tree.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-title">
+      <strong>demo2</strong>
+      <span class="app-subtitle">aiset configuration host · internal test application, no authentication</span>
+    </div>
+    <div class="app-meta" id="app-status" role="status" aria-live="polite">connecting…</div>
+  </header>
+
+  <main class="workspace">
+    <section class="pane pane-editor" aria-label="Configuration tree">
+      <div class="pane-head">
+        <h2>Configuration</h2>
+        <div class="pane-tools">
+          <label class="pane-toggle" title="Show the stored text of objects and arrays">
+            <input type="checkbox" id="tree-values-text"> values as text
+          </label>
+          <label class="pane-toggle" title="Show keys the descriptor allows but the file does not contain yet">
+            <input type="checkbox" id="tree-show-absent"> show absent
+          </label>
+          <span class="pane-note">Edits are staged until Apply</span>
+        </div>
+      </div>
+      <div class="pane-body" id="settings-tree"></div>
+    </section>
+
+    <section class="pane pane-chat" aria-label="Configuration assistant">
+      <div class="pane-head">
+        <h2>Assistant</h2>
+        <span class="pane-note" id="chat-model"></span>
+      </div>
+      <div class="pane-body" id="chat-history" role="log" aria-live="polite"></div>
+      <form class="chat-input" id="chat-form">
+        <textarea id="chat-text" rows="2" placeholder="Ask for a change, for example: raise the fixture count to 5"
+                  aria-label="Message to the configuration assistant"></textarea>
+        <div class="chat-actions">
+          <button type="submit" id="chat-send">Send</button>
+          <button type="button" id="chat-cancel" disabled>Cancel</button>
+          <button type="button" id="chat-clear">Clear</button>
+        </div>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

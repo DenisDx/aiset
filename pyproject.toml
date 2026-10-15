@@ -12,7 +12,7 @@ license = { text = "MIT" }
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "pyflakes>=3.0"]
 
 [project.scripts]
 aiset = "aiset.cli:main"
@@ -24,4 +24,4 @@ where = ["src"]
 aiset = ["assets/*.js", "assets/*.css"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "demo2/tests"]

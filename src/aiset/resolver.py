@@ -12,13 +12,14 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from .descriptor import Node
 from .jsonsrc import TemplateRef
 from .validator import MAX_EXACT_INT, MIN_EXACT_INT, ValueIssue
 
 PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
+_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @dataclass
@@ -45,6 +46,15 @@ class Resolver:
         if inline_default is not None:
             return inline_default, "inline_default"
         return "", "empty"
+
+    def presence(self, names: Iterable[str]) -> dict[str, bool]:
+        """Which variables are actually set; values are never exposed."""
+        out: dict[str, bool] = {}
+        for name in names:
+            if not _NAME_RE.fullmatch(name):
+                continue
+            out[name] = self.lookup(name, None)[1] in ("override", "env", "dotenv")
+        return out
 
     def resolve_text(self, text: str, path: str, issues: list[ValueIssue],
                      provenance: dict[str, Any] | None) -> str:
