@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiset"
+version = "0.1.0"
+description = "Shared, encapsulated JSON5 settings library for aidir, aibt, sndbx, colloc and other projects"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+aiset = "aiset.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aiset = ["assets/*.js", "assets/*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,82 @@
+/* aiset editor styling: neutral, framework-free, no external dependency. */
+
+.aiset-editor {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: #1c1f24;
+  max-width: 1100px;
+}
+
+.aiset-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.aiset-label {
+  font-weight: 600;
+}
+
+.aiset-path,
+.aiset-document {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 4px 6px;
+  border: 1px solid #c6ccd4;
+  border-radius: 4px;
+  min-width: 240px;
+}
+
+.aiset-value {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  padding: 8px;
+  border: 1px solid #c6ccd4;
+  border-radius: 4px;
+  white-space: pre;
+}
+
+.aiset-field {
+  margin: 6px 0;
+  color: #4a515b;
+  font-size: 13px;
+}
+
+.aiset-field[data-read-only="true"] {
+  color: #8a5a00;
+  font-weight: 600;
+}
+
+.aiset-hint {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 6px;
+}
+
+.aiset-local,
+.aiset-status {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.aiset-status[data-state="ok"] {
+  color: #1a7f37;
+}
+
+.aiset-status[data-state="error"] {
+  color: #b42318;
+}
+
+.aiset-status[data-state="pending"] {
+  color: #7a5b00;
+}
+
+.aiset-issues {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #b42318;
+  font-size: 13px;
+}

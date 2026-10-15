@@ -1,0 +1,34 @@
+# Documents
+
+aiset is an independent library with its own document set. This file lists
+every document and what it is responsible for, per the agent workflow in
+[AGENTS.md](AGENTS.md).
+
+| File | Responsibility |
+|---|---|
+| [SPEC.md](SPEC.md) | Complete frozen specification: goal, findings, library boundaries, descriptor grammar, paths and edit semantics, resolver policy, comment-preserving storage, service semantics, security, acceptance matrix, phased plan, UI customization, hooks, logging. Read-only for agents. |
+| [SPEC_service.md](SPEC_service.md) | Normative service and transport contract: Python signatures, HTTP routes, MCP tools, views and permissions, revisions, result and error envelopes, Config object, callbacks, UI asset API, CLI. Kept in sync with the implementation. |
+| [README.md](README.md) | Project overview, integration boundary, environment policy, structure, install/run/test commands, document map. |
+| [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) | Implementation plan and work log: phases, completion marks, decisions and deviations. |
+| [_AGENT_NOTES.md](_AGENT_NOTES.md) | Implementation guidance: working preferences, decisions with rationale, hard constraints, pitfalls, resolved white spots, do-not list. |
+| [TEST.md](TEST.md) | Test protocol: automated suite coverage, manual browser and demo protocol, acceptance matrix mapping. |
+| [commands.md](commands.md) | Real commands: local environment setup, demo start, tests, descriptor CLI. |
+| [DOCUMENTS.MD](DOCUMENTS.MD) | This document map. |
+| [AGENTS.md](AGENTS.md) | Exact copy of the host agent workflow; read-only for agents. |
+| [memory/context.md](memory/context.md) | Working context between sessions: decisions, open questions, user preferences, notes. |
+| [memory/history.md](memory/history.md) | Chronological record of requests, operations and results. |
+| [demo_aidir_config.template.json5](demo_aidir_config.template.json5) | Host-owned example descriptor for aidir written in the proposed grammar; reference for host integrations. |
+| [examples/descriptor.json5](examples/descriptor.json5) | Demo descriptor covering every row of the M1 fixture matrix. |
+| [examples/config.json5](examples/config.json5) | Commented mixed-type demo configuration used as the seeding example; never modified at runtime. |
+| [examples/aiset_descriptor.json5](examples/aiset_descriptor.json5) | Descriptor for aiset's own settings document (SPEC.md 3.6). |
+| [examples/aiset.json5](examples/aiset.json5) | aiset's own settings document, seeded into `.local/demo/`. |
+| [examples/SKILL.md](examples/SKILL.md) | Host-provided Markdown configuration-editing skill (SPEC.md 14.2); instructional only. |
+
+## Change control
+
+- `SPEC.md` is agent-write-protected. A required correction goes into
+  `SPEC_.md` with the section format required by `AGENTS.md`.
+- An interface change updates `SPEC_service.md` and the implementation in the
+  same change (SPEC_service.md section 19).
+- New behaviour is recorded in `IMPLEMENTATION_LOG.md`; decisions with
+  rationale go into `_AGENT_NOTES.md`.

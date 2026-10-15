@@ -1,0 +1,279 @@
+// aiset demo descriptor (examples/descriptor.json5).
+// Demonstrates the complete grammar of SPEC.md 4.6 and every row of the M1
+// fixture matrix (SPEC.md 17): strings, ints/numbers, bools, null/nullable,
+// objects with dynamic keys, arrays, unions, templates, environment
+// placeholders, read-only and secret fields, and project-owned metadata.
+//
+// Run: aiset validate-descriptor examples/descriptor.json5
+
+{
+  descriptor_version: "1.0",
+  project: "aiset-demo",
+  config_version: "1.0",
+
+  // Project-owned metadata: ignored at runtime, retained for the host, and
+  // reported by validate_descriptor as UNKNOWN_DESCRIPTOR_PROPERTY.
+  x_demo: {
+    subsystem: "settings",
+    owner: "aiset",
+    notes: "Fixture descriptor for the standalone editor milestone",
+  },
+
+  root: {
+    type: "object",
+    description: "aiset standalone demo configuration",
+
+    children: {
+
+      // -- identity ----------------------------------------------------
+      version: {
+        type: "string",
+        const: "1.0",
+        read_only: true,
+        apply: "restart",
+        description: "Configuration schema version; matches the descriptor config_version.",
+      },
+      title: {
+        type: "string",
+        max_length: 80,
+        description: "Instance title; may come from an environment placeholder.",
+        env: { allowed: true, convert: "string" },
+        apply: "restart",
+        ui: { placeholder: "aiset demo" },
+      },
+
+      // -- templates (4.6.10) -------------------------------------------
+      port_template: {
+        typedef: "service_port",
+        type: "int",
+        minimum: 1,
+        maximum: 65535,
+        description: "TCP port",
+        apply: "restart",
+      },
+      http_port: {
+        type: "service_port",
+        default: 8383,
+        description: "HTTP listener port",
+        env: { allowed: true, convert: "int" },
+      },
+      admin_port: {
+        type: "service_port",
+        description: "Admin listener port",
+        default: 8384,
+        env: { allowed: true, convert: "int" },
+      },
+
+      // -- scalars of every type ---------------------------------------
+      enabled: {
+        type: "bool",
+        default: true,
+        description: "Master switch; changes apply live.",
+        apply: "live",
+        x_demo: { subsystem: "core" },
+      },
+      counters: {
+        type: "object",
+        description: "Numbers: zero, negative, fractional and bounded values.",
+        apply: "reload",
+        children: {
+          zero: { type: "int", minimum: 0, description: "Explicit zero value" },
+          negative: { type: "int", description: "Negative values are allowed here" },
+          fraction: { type: "number", minimum: 0, maximum: 1, description: "Fractional value" },
+          exact_min: { type: "int", minimum: -9007199254740991, maximum: 9007199254740991 },
+        },
+      },
+      text: {
+        type: "object",
+        description: "Strings: empty, unicode, escapes and length constraints.",
+        apply: "live",
+        children: {
+          empty: { type: "string", description: "Explicitly empty string" },
+          unicode: { type: "string", description: "Unicode text is preserved byte for byte" },
+          escaped: { type: "string", description: "Quotes, slashes and newlines survive edits" },
+          short_code: { type: "string", min_length: 2, max_length: 8, pattern: "^[A-Z]{2,8}$" },
+          // Absent in the demo file: exists is false and the default is reported
+          // separately, which keeps "absent" distinct from an explicit null.
+          level_default: { type: "string", default: "warning", description: "Absent with default" },
+          level_name: {
+            type: "string",
+            enum: ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"],
+          },
+        },
+      },
+      nullable_field: {
+        type: "object",
+        nullable: true,
+        description: "Explicit null is a present value, not a missing one.",
+        apply: "reload",
+        children: {
+          maybe: { type: "string", nullable: true, default: "unset" },
+        },
+      },
+      optional_leaf: {
+        type: "string",
+        max_length: 64,
+        description: "Absent optional field: exists is false until it is created.",
+        apply: "live",
+      },
+
+      // -- union (4.3) --------------------------------------------------
+      log_level: {
+        type: "union",
+        description: "Integer 0-7 or a named level",
+        apply: "live",
+        children_options: [
+          { type: "int", minimum: 0, maximum: 7 },
+          {
+            type: "string",
+            enum: ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"],
+          },
+        ],
+      },
+
+      // -- dynamic keys -------------------------------------------------
+      logging: {
+        type: "object",
+        description: "Per-subsystem logging",
+        apply: "reload",
+        children: {
+          levels: {
+            type: "object",
+            description: "Dynamic keys restricted to known subsystems",
+            key_enum: ["workers", "http", "webui"],
+            additional_children: {
+              type: "string",
+              enum: ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"],
+            },
+          },
+          sinks: {
+            type: "object",
+            description: "Free-form sink keys",
+            key_pattern: "^[a-zA-Z][a-zA-Z0-9_]*$",
+            additional_children: {
+              type: "object",
+              children: {
+                target: { type: "string" },
+                rotate_bytes: { type: "int", minimum: 0 },
+              },
+            },
+          },
+        },
+      },
+
+      // -- literal dots, slashes, tildes and numeric keys ---------------
+      literal_keys: {
+        type: "object",
+        description: "Keys that need JSON Pointer escaping",
+        apply: "reload",
+        additional_children: { type: "int" },
+        key_pattern: "^[A-Za-z0-9./~_-]+$",
+      },
+
+      // -- arrays -------------------------------------------------------
+      resources: {
+        type: "array",
+        description: "Tracked resources",
+        apply: "restart",
+        children: {
+          type: "object",
+          children: {
+            id: { type: "string", pattern: "^[a-zA-Z0-9_-]+$", read_only: true },
+            kind: { type: "string", enum: ["cuda", "cpu", "metal", "rocm"] },
+            vram_bytes: { type: "int", minimum: 0 },
+            ratio: { type: "number", minimum: 0 },
+            monitoring: {
+              type: "object",
+              nullable: true,
+              children: {
+                poll_interval: { type: "int", minimum: 1 },
+                command: {
+                  type: "string",
+                  ui: {
+                    widget: "textarea",
+                    rows: 3,
+                    placeholder: "nvidia-smi --query-gpu=...",
+                    help: "Editing this value does not execute it.",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      flag_list: {
+        type: "array",
+        description: "Mixed item types through children_options",
+        apply: "live",
+        children_options: [
+          { type: "string", min_length: 1 },
+          { type: "int", minimum: 0, maximum: 100 },
+          { type: "bool" },
+        ],
+      },
+      nested_arrays: {
+        type: "array",
+        description: "Arrays of arrays",
+        apply: "reload",
+        children: { type: "array", children: { type: "int" } },
+      },
+      empty_list: {
+        type: "array",
+        description: "An empty array is a present value",
+        apply: "live",
+        children: { type: "int", minimum: 0 },
+      },
+      tag_list: {
+        type: "array",
+        description: "Unique string list",
+        apply: "reload",
+        children: { type: "string", pattern: "^[a-z0-9-]+$" },
+        unique_items: true,
+        max_items: 16,
+      },
+
+      // -- dynamic worker entries ---------------------------------------
+      workers: {
+        type: "object",
+        description: "Dynamic worker registry",
+        apply: "reload",
+        children: {
+          items: {
+            type: "object",
+            additional_children: {
+              type: "object",
+              children: {
+                enabled: { type: "bool", default: true, apply: "live" },
+                endpoint: { type: "string", env: { allowed: true, convert: "string" } },
+                request_timeout: { type: "int", minimum: 1, env: { allowed: true, convert: "int" } },
+                fallbacks: { type: "array", children: { type: "string" } },
+                generation_defaults: {
+                  type: "object",
+                  additional_children: { type: "number" },
+                  key_pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$",
+                },
+              },
+            },
+            key_pattern: "^[a-zA-Z][a-zA-Z0-9_]*$",
+          },
+        },
+      },
+
+      // -- secrets ------------------------------------------------------
+      credentials: {
+        type: "object",
+        description: "Sensitive subtree; read and write are separately permissioned",
+        apply: "restart",
+        children: {
+          api_key: {
+            type: "string",
+            secret: true,
+            env: { allowed: true, convert: "string" },
+            description: "Never sent to a client without settings_read_secret",
+          },
+          password: { type: "string", secret: true, env: { allowed: true, convert: "string" } },
+        },
+      },
+    },
+  },
+}

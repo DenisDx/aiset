@@ -3,68 +3,149 @@
 Shared, encapsulated JSON5 settings library for aidir, aibt, sndbx, colloc,
 and other projects.
 
-## Current status
+- Reads, validates, and edits JSON5 configuration while preserving comments and
+  untouched source bytes.
+- Resolves `${VAR}` / `${VAR:-default}` templates with one global policy and
+  never persists resolved secrets.
+- Describes project fields with a shared descriptor and a JSON Pointer edit
+  contract.
+- Ignores project-owned descriptor metadata at runtime and reports it through
+  development validation.
+- Exposes one service over Python, HTTP, and MCP-shaped envelopes, with
+  reusable UI assets for embedding into any host settings page.
+- Ships its own backend, frontend, and a standalone demo on default port
+  **8383** with no host, accounts, Redis, or model.
 
-Documentation bootstrap only. No Python package, server, frontend, descriptor
-validator, or test runner has been implemented yet.
-The complete working specification is [SPEC_.md](SPEC_.md). It incorporates the
-original design and all amendments, including AI skills, preparation tasks,
-the discussion register in section 16, and the phase plan in section 17.
-Its first milestone is the standalone mixed-type configuration editor with a
-web UI on default port **8383**. No server is running or implemented yet.
+The complete design is [SPEC.md](SPEC.md); the normative service and transport
+interface is [SPEC_service.md](SPEC_service.md). The interface is versioned:
+incompatible versions fail with a clear compatibility error.
 
-During specification development, edit only [SPEC_.md](SPEC_.md) as the
-specification source. There is no separate original specification to consult.
-Once finalized, freeze the document and rename it to `SPEC.md`.
+## Status
 
-## Intended capabilities
+Milestone M1 is implemented and tested: the shared core (source-preserving JSON5
+template engine, descriptor compiler, resolver, validator, store, service) and
+the standalone demo editor. See [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md)
+for the plan and for what belongs to later milestones.
 
-- Read, validate, and edit JSON5 configuration while preserving comments.
-- Resolve environment templates without persisting resolved secrets.
-- Describe project fields using a shared descriptor.
-- Ignore project-owned descriptor metadata at runtime and report unknown
-  properties through development validation.
-- Provide Python, HTTP, MCP, and reusable UI integration through public APIs.
-- Run its own backend/frontend with a local demo file and no host/user accounts.
-- Server-side validation is always authoritative. Browser-side checks are
-  optional and best-effort (a first filter to avoid round-trips); a UI may
-  perform none at all, since aiset can be driven through any UI over its API.
-- Proposed extensions: standard-control `ui` overrides, `helper` micro-forms/
-  wizards, and registered synchronous/asynchronous host lifecycle hooks.
-  These are discussion drafts in specification sections 18-19, not implemented.
+Not implemented yet, by specification: the MCP adapter and the lifecycle-hook
+dispatcher (M2). A descriptor that binds hooks is accepted by the descriptor
+compiler, but any change touching a hook-bound node is refused with
+`UNSUPPORTED_CAPABILITY` rather than silently ignored.
+
+## Quick start
+
+Everything runs from a local virtual environment inside this directory. The
+system Python is not used, and the library never creates or switches an
+environment itself.
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m pytest              # 230 automated tests
+.venv/bin/python demo_app.py            # http://127.0.0.1:8383
+```
+
+`demo_app.py` binds `0.0.0.0` by default, serves the bundled UI and API, and
+seeds `.local/demo/config.json5` and `.local/demo/aiset.json5` from
+[examples/](examples/) only when those files are absent. Port and host can be
+overridden with the `--<dotted.path>:<value>` convention:
+
+```sh
+.venv/bin/python demo_app.py --aiset.port:12345 --aiset.host:"127.0.0.1"
+```
+
+Descriptor diagnostics run without starting anything:
+
+```sh
+.venv/bin/aiset validate-descriptor examples/descriptor.json5
+.venv/bin/aiset validate-descriptor examples/descriptor.json5 --strict --format text
+```
+
+## Using the library
+
+```python
+from aiset import merge
+from aiset.resolver import Resolver
+from aiset.service import Principal, Service
+
+service = Service()
+service.register(
+    "main",
+    "config.json5",
+    open("examples/descriptor.json5").read(),
+    resolver=Resolver(dotenv={"REDIS_HOST": "cache.internal"}),
+)
+principal = Principal.demo()          # hosts supply their own authorization
+
+loaded = service.load("main", principal=principal)
+value = service.get("main", "/log_level", principal=principal)
+check = service.validate("main", "/log_level", '"critical"',
+                         expected_revision=loaded.revision,
+                         expected_descriptor_revision=loaded.descriptor_revision,
+                         principal=principal)
+result = service.set("main", "/log_level", '"critical"',
+                     expected_revision=loaded.revision,
+                     expected_descriptor_revision=loaded.descriptor_revision,
+                     principal=principal)
+assert result.stored and result.application_state == "applied"
+merged = merge({"a": {"b": 1}}, {"a": {"c": 2}})
+```
+
+The HTTP adapter is a dependency-free WSGI application, so a host can mount it
+inside its own authenticated server, and the demo serves the same app:
+
+```python
+from aiset.httpd import create_app
+
+app = create_app(service, base="/api/settings")
+```
+
+The shipped UI assets (`include_assets`, `render_node_editor`,
+`render_full_editor`) are plain JavaScript in
+[src/aiset/assets/aiset.js](src/aiset/assets/aiset.js); the host includes them
+and inserts the returned HTML fragment.
+
+## Repository layout
+
+```text
+aiset/
+  pyproject.toml            package metadata, console script, no runtime deps
+  demo_app.py               standalone entry point (plain HTTP, port 8383)
+  src/aiset/
+    errors.py               stable error codes and HTTP status mapping
+    pointer.py              JSON Pointer parsing and traversal
+    jsonsrc.py              source-preserving JSON5 template engine (parse/edit)
+    descriptor.py           descriptor load, validate, compose, compile
+    validator.py            value validation and operational limits
+    resolver.py             environment resolution and effective snapshots
+    store.py                revisions, lock, atomic write, backups, LKG
+    service.py              the shared read/validate/set pipeline
+    config_obj.py           Config object model and mount grammar
+    merge.py                pure merge(base, update)
+    httpd.py                WSGI HTTP adapter
+    cli.py                  `aiset validate-descriptor`
+    assets/                 reusable UI assets (JS + CSS)
+  frontend/index.html       demo page using the shipped assets
+  examples/                 demo and aiset descriptors/configurations, editing skill
+  tests/                    automated suite
+  .local/demo/              editable demo state (seeded, never tracked)
+```
 
 ## Integration boundary
 
 Host projects use aiset unchanged, supplying paths, descriptors, configuration,
 and public API hooks. Host-specific adapters remain outside this directory.
+Placement: aidir keeps `aiset/` at the project root; other projects use
+`src/aiset/` when a `src/` directory exists, otherwise `aiset/` at the root.
 
-Placement:
-
-- aidir: `aiset/` at the project root.
-- Other projects with a `src/` directory: `src/aiset/`.
-- Other projects without `src/`: `aiset/` at the project root.
-
-This directory is excluded from aidir's Git tracking and is its own Git
-repository. A pinned Git submodule remains a future delivery recommendation,
-not the current installation mechanism.
-
-## Python environments
-
-Normal embedded use installs aiset into the host project's venv. Standalone
-development, automated tests, and the local demo use an on-demand `.venv/`
-inside aiset, with the same package plus required optional/test dependencies.
-Setup is explicit; the library never creates or switches environments itself.
-
-The local environment is a lightweight testing convenience. It requires no
-separate account system or special security subsystem; the demo execution model
-(specification section 3.3) is independent of environment selection.
-No environment or installation tooling has been created yet.
+Python environments: normal embedded operation installs aiset into the host
+project's venv. Standalone development, tests, and the demo use the local
+`.venv/` inside this directory. Both environments install the same package; the
+library never activates, creates, or repairs an environment.
 
 ## Environment resolver policy
 
-There is exactly one resolver policy for every host (specification section 6).
-Placeholders such as `${VAR}` and `${VAR:-default}` are resolved with this order,
-highest priority first:
+One resolver policy for every host, highest priority first:
 
 1. explicit host overrides;
 2. the process environment;
@@ -72,48 +153,33 @@ highest priority first:
 4. the placeholder's inline default;
 5. the descriptor/config `default`.
 
-Additional rules:
+A value from `.env` wins over the config `default`. `:-` uses POSIX shell
+semantics and is the only supported operator: `${VAR}` yields the empty string
+when the variable is unset or empty, `${VAR:-default}` yields `default` then.
+Resolution is single-pass, environment values are data, and `env.allowed` gates
+resolution. The browser never receives environment values; server validation is
+authoritative.
 
-- A value supplied by `.env` wins over the config `default`.
-- `:-` uses POSIX shell semantics and is the only supported operator:
-  - `${VAR}` yields the variable value, or the empty string when it is unset
-    or empty;
-  - `${VAR:-default}` yields the variable value, or `default` when it is unset
-    or empty.
-- Resolution is single-pass; environment values are data and are never
-  re-parsed as JSON5. They cannot inject objects, arrays, keys, or comments.
-- The browser never receives environment values; server validation is
-  authoritative.
-
-Hosts that currently behave differently must be brought into line during
-integration. In particular:
-
-- **aidir** substitutes before parsing and must adopt source-preserving editing.
-- **aibt** currently consults `.env` before the process environment and must
-  reverse that order to match the policy above.
-- **sndbx** currently gives the process environment priority; it already matches
-  the environment order but must adopt the same `:-` semantics.
-- **colloc** has no JSON5 file today and must introduce one via its migration
-  adapter.
-
-Do not implement a host-specific precedence profile: integrations conform to
-this single policy. See specification section 6 for the authoritative contract.
+Hosts that currently behave differently are brought into line during
+integration: aidir substitutes before parsing and adopts source-preserving
+editing; aibt consults `.env` before the process environment and reverses it;
+sndbx already matches the order but adopts the same `:-` semantics; colloc
+introduces a JSON5 file through its migration adapter. No host-specific
+precedence profile exists in the library.
 
 ## Documents
 
 | File | Responsibility |
 |---|---|
-| [SPEC_.md](SPEC_.md) | Complete editable specification during development; finalized as SPEC.md later. |
-| [SPEC_service.md](SPEC_service.md) | Authoritative service and transport interface specification (Python/HTTP/MCP); normative for the interface and kept in sync with the project. |
-| [AGENT_NOTES.md](AGENT_NOTES.md) | Implementation guidance for the agent: working preferences, decisions and rationale, pitfalls, open white spots. |
-| [AGENTS.md](AGENTS.md) | Exact copy of aidir's agent workflow; read-only for agents. |
-| [commands.md](commands.md) | Commands applicable to the current documentation bootstrap. |
-| [TEST.md](TEST.md) | Bootstrap checks and future implementation acceptance gates. |
-| [memory/context.md](memory/context.md) | Initial implementation context and unresolved decisions. |
-| [memory/history.md](memory/history.md) | Operations performed in the aiset project. |
-| [.gitignore](.gitignore) | Local configuration, credentials, runtime state, dependencies, and build exclusions. |
+| [DOCUMENTS.MD](DOCUMENTS.MD) | Document map for the whole project. |
+| [SPEC.md](SPEC.md) | Complete specification (read-only for agents). |
+| [SPEC_service.md](SPEC_service.md) | Normative Python/HTTP/MCP interface. |
+| [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) | Implementation plan and work log. |
+| [_AGENT_NOTES.md](_AGENT_NOTES.md) | Implementation guidance and pitfalls. |
+| [TEST.md](TEST.md) | Test protocol and acceptance mapping. |
+| [commands.md](commands.md) | Setup, run, and test commands. |
+| [AGENTS.md](AGENTS.md) | Agent workflow (read-only for agents). |
+| [memory/context.md](memory/context.md), [memory/history.md](memory/history.md) | Agent working context and change log. |
 
-[AGENTS.md](AGENTS.md) remains unchanged and read-only. Its references to the
-protected final specification apply once this working draft is finalized.
-The current specification-development workflow is documented above. Do not
-implement an unapproved design merely because it appears in the draft.
+[AGENTS.md](AGENTS.md) is unchanged and read-only. Corrections to protected
+documents are written to a `FILENAME_.md` file as described there.

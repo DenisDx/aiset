@@ -21,6 +21,8 @@ htmlcov/
 *.tmp
 *.json5.lock
 *.json.lock
+*.back
+*.conflicted.*.back
 
 # Python environments, caches, and build output
 venv/

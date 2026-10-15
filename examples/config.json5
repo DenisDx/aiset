@@ -1,0 +1,129 @@
+// aiset demo configuration (examples/config.json5).
+// This tracked example is never modified by the running backend; the standalone
+// demo seeds .local/demo/config.json5 from it only when that file is absent.
+//
+// The file demonstrates comment ownership, single quotes, trailing commas,
+// unquoted and quoted placeholders, unicode and escaped text, dynamic keys and
+// every supported value type.
+
+{
+  // Read-only field: version matches the descriptor config_version.
+  version: "1.0",
+
+  //AGENT: keep the title short and descriptive; it is shown in the demo header.
+  title: "${AISET_DEMO_TITLE:-aiset demo}",
+
+  // Live switch: changes apply without reload or restart.
+  enabled: true,
+
+  // Templates (descriptor `typedef: "service_port"`).
+  http_port: ${AISET_DEMO_HTTP_PORT:-8383},
+  admin_port: 8384,
+
+  counters: {
+    zero: 0,
+    // Negative and fractional values are both legal here.
+    negative: -12,
+    fraction: 0.25,
+    exact_min: 9007199254740991,
+  },
+
+  text: {
+    empty: '',
+    unicode: "значение — ünïcøde ✓",
+    // Quotes, slashes and escaped newlines must survive an edit byte for byte.
+    escaped: "line one\nline two \"quoted\" and a /slash/",
+    short_code: "DEMO",
+    level_name: "warning",
+  },
+
+  // Explicit null is a present value, distinct from an absent optional field.
+  nullable_field: null,
+
+  log_level: "info",
+
+  logging: {
+    // Dynamic keys restricted by key_enum.
+    levels: {
+      workers: "debug",
+      http: "warning",
+      webui: 'info',
+    },
+    // Dynamic keys constrained by key_pattern; each value is an object.
+    sinks: {
+      main: { // Trailing comment for the main sink.
+        target: "logs/main.log",
+        rotate_bytes: 1048576,
+      },
+      audit: {
+        target: "logs/audit.log",
+        rotate_bytes: 10485760,
+      },
+    },
+  },
+
+  // Keys that need JSON Pointer escaping: /literal_keys/dotted.key
+  literal_keys: {
+    "dotted.key": 1,
+    "with/slash": 2,
+    "with~tilde": 3,
+    "0": 4, // A numeric object key stays a key.
+  },
+
+  resources: [
+    // First resource: the id is read-only after creation.
+    {
+      id: "gpu0",
+      kind: "cuda",
+      vram_bytes: 24576000000,
+      ratio: 0.5,
+      monitoring: {
+        poll_interval: 30,
+        command: "nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits",
+      },
+    },
+    {
+      id: "cpu0",
+      kind: "cpu",
+      vram_bytes: 0,
+      ratio: 0,
+    },
+  ],
+
+  flag_list: ["alpha", 42, true, 'beta'],
+
+  nested_arrays: [[1, 2], [3]],
+
+  empty_list: [],
+
+  tag_list: ["primary", "fallback"],
+
+  workers: {
+    items: {
+      //AGENT: worker ids must match ^[a-zA-Z][a-zA-Z0-9_]*$.
+      call_ollama: {
+        enabled: true,
+        endpoint: "${AISET_DEMO_ENDPOINT:-http://127.0.0.1:11434}",
+        request_timeout: ${AISET_DEMO_TIMEOUT:-300},
+        fallbacks: ["http://127.0.0.1:11435"],
+        generation_defaults: {
+          temperature: 0.2,
+        },
+      },
+      // Block comment before a dynamic entry.
+      call_remote: {
+        enabled: false,
+        endpoint: "https://example.invalid/v1",
+        request_timeout: 120,
+        fallbacks: [],
+      },
+    },
+  },
+
+  credentials: {
+    // Secrets are placeholders; the resolved value is never persisted here.
+    api_key: "${AISET_DEMO_API_KEY:-}",
+    password: "${AISET_DEMO_PASSWORD:-}",
+  },
+  // optional_leaf is intentionally absent: exists is false until it is created.
+}

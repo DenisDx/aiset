@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!-- Standalone aiset demo frontend. Plain HTTP, no security checks: this is an
+     internal test application (SPEC.md 3.3). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>aiset settings editor</title>
+  <link rel="stylesheet" href="/assets/aiset.css">
+  <script src="/assets/aiset.js"></script>
+</head>
+<body>
+  <header>
+    <h1>aiset settings editor</h1>
+    <p class="aiset-hint">
+      Read, validate and save one JSON5 value at a time. Source comments,
+      quotes and placeholders are preserved byte for byte; the server
+      revalidates every candidate.
+    </p>
+  </header>
+  <main id="aiset-root" data-aiset-full="demo" data-aiset-path="/"></main>
+  <script>
+    aiset.ready(function (documents) {
+      var root = document.getElementById("aiset-root");
+      aiset.mount(root, documents[0] || "demo", "/");
+    });
+  </script>
+</body>
+</html>

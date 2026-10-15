@@ -1,0 +1,40 @@
+// aiset's own settings (examples/aiset.json5).
+// The standalone demo seeds .local/demo/aiset.json5 from this file only when
+// that file is absent. Every value can also be overridden on the command line
+// with the --<dotted.path>:<value> convention (SPEC.md 3.3).
+
+{
+  aiset: {
+    // Default standalone port is 8383 and the default bind is 0.0.0.0.
+    port: 8383,
+    host: "0.0.0.0",
+    documents: ["demo", "aiset"],
+  },
+
+  storage: {
+    backup_depth: 5,
+    conflicted_retention: 5,
+    symlinks_allowed: true,
+    reread_interval_seconds: 0,
+    lock_timeout_seconds: 5,
+    write_attempts: 3,
+  },
+
+  runtime: {
+    callback_timeout_seconds: 30,
+    limits: {
+      max_file_size: 8388608,
+      max_body_size: 8388608,
+      max_depth: 64,
+      max_collection_size: 100000,
+      max_string_length: 1048576,
+      max_pattern_length: 512,
+      regex_timeout_ms: 100,
+    },
+  },
+
+  logging_level: "info",
+
+  // The AI block is declared by the descriptor but never executed by this build.
+  ai: null,
+}

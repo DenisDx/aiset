@@ -1,0 +1,176 @@
+// aiset's own configuration descriptor (examples/aiset_descriptor.json5).
+// These settings live in a dedicated aiset document, separate from the host
+// project configuration, and are edited through the same service and UI
+// (SPEC.md 3.6).
+
+{
+  descriptor_version: "1.0",
+  project: "aiset",
+  root: {
+    type: "object",
+    description: "aiset library settings",
+
+    children: {
+      // -- demo entry point (SPEC.md 3.3) ------------------------------
+      aiset: {
+        type: "object",
+        description: "Standalone demo server",
+        apply: "restart",
+        children: {
+          port: {
+            type: "int",
+            minimum: 1,
+            maximum: 65535,
+            default: 8383,
+            description: "Default demo port; 8383 is the fixed default",
+            env: { allowed: true, convert: "int" },
+          },
+          host: {
+            type: "string",
+            default: "0.0.0.0",
+            description: "Default demo bind address",
+            env: { allowed: true, convert: "string" },
+          },
+          documents: {
+            type: "array",
+            description: "Registered document ids available in the demo",
+            children: { type: "string", min_length: 1 },
+          },
+        },
+      },
+
+      // -- storage (SPEC.md 14.8, 10.4) --------------------------------
+      storage: {
+        type: "object",
+        apply: "live",
+        children: {
+          backup_depth: {
+            type: "int",
+            minimum: 0,
+            maximum: 50,
+            default: 5,
+            description: "Last Known Good backup chain depth; 0 disables backups",
+          },
+          conflicted_retention: {
+            type: "int",
+            minimum: 1,
+            maximum: 100,
+            default: 5,
+            description: "How many rejected external copies are kept",
+          },
+          symlinks_allowed: {
+            type: "bool",
+            default: true,
+            description: "Whether a registered path may resolve through a symlink",
+          },
+          reread_interval_seconds: {
+            type: "number",
+            minimum: 0,
+            maximum: 3600,
+            default: 0,
+            description: "Periodic external re-read timer; 0 disables it",
+          },
+          lock_timeout_seconds: {
+            type: "number",
+            minimum: 0.1,
+            maximum: 120,
+            default: 5,
+            description: "Bounded store lock acquisition",
+          },
+          write_attempts: {
+            type: "int",
+            minimum: 1,
+            maximum: 10,
+            default: 3,
+            description: "Durable write attempts before an ERROR is logged",
+          },
+        },
+      },
+
+      // -- callbacks and limits (SPEC.md 10.3, 11) ----------------------
+      runtime: {
+        type: "object",
+        apply: "live",
+        children: {
+          callback_timeout_seconds: {
+            type: "number",
+            minimum: 0.1,
+            maximum: 600,
+            default: 30,
+            description: "Common bounded timeout for save callbacks and hooks",
+          },
+          limits: {
+            type: "object",
+            children: {
+              max_file_size: { type: "int", minimum: 1024, default: 8388608 },
+              max_body_size: { type: "int", minimum: 1024, default: 8388608 },
+              max_depth: { type: "int", minimum: 1, maximum: 256, default: 64 },
+              max_collection_size: { type: "int", minimum: 1, default: 100000 },
+              max_string_length: { type: "int", minimum: 1, default: 1048576 },
+              max_pattern_length: { type: "int", minimum: 1, maximum: 4096, default: 512 },
+              regex_timeout_ms: { type: "int", minimum: 1, maximum: 10000, default: 100 },
+            },
+          },
+        },
+      },
+
+      // -- logging (SPEC.md 20) -----------------------------------------
+      logging_level: {
+        type: "string",
+        enum: ["debug", "info", "warning", "error"],
+        default: "info",
+        description: "Library log level; the sink is host-controlled",
+        apply: "live",
+      },
+
+      // -- AI block (SPEC.md 14.7); declared, never executed -------------
+      ai: {
+        type: "object",
+        nullable: true,
+        description: "Reserved AI configuration; this build does not run an agent",
+        apply: "restart",
+        children: {
+          enabled: { type: "bool", default: false },
+          timeout_seconds: { type: "number", minimum: 1, maximum: 600, default: 30 },
+          fallback_max_hops: { type: "int", minimum: 0, maximum: 10, default: 2 },
+          require_explicit_approval: { type: "bool", default: true },
+          providers: {
+            type: "array",
+            children: {
+              type: "object",
+              children: {
+                id: { type: "string", min_length: 1 },
+                type: { type: "string", enum: ["openai", "openaix"] },
+                base_url: { type: "string" },
+                api_key: {
+                  type: "string",
+                  secret: true,
+                  env: { allowed: true, convert: "string" },
+                },
+              },
+            },
+          },
+          models: {
+            type: "object",
+            additional_children: {
+              type: "object",
+              children: {
+                provider: { type: "string" },
+                model: { type: "string" },
+              },
+            },
+            key_pattern: "^[a-z][a-z0-9_]*$",
+          },
+          tools_allowed: { type: "array", children: { type: "string" } },
+          audit: {
+            type: "object",
+            children: {
+              enabled: { type: "bool", default: true },
+              redact_secrets: { type: "bool", default: true },
+            },
+          },
+        },
+      },
+    },
+  },
+}
