@@ -32,6 +32,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 
 from aiset.errors import AisetError  # noqa: E402
 from aiset.httpd import create_app  # noqa: E402
+from aiset.merge import merge  # noqa: E402
 from aiset.jsonsrc import Document  # noqa: E402
 from aiset.resolver import Resolver  # noqa: E402
 from aiset.service import Principal, Service  # noqa: E402
@@ -42,6 +43,11 @@ from env import load_env_file  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 DOCUMENT = "demo2"
+# A component document that overrides one section of the main configuration
+# (SPEC.md 10.1). Its descriptor also owns the templates both documents share.
+OVERRIDE_DOCUMENT = "conf2"
+OVERRIDE_DIRNAME = "conf2"
+OVERRIDE_MOUNT = "includes.conf2"
 LOGGER = logging.getLogger("demo2")
 
 # Seconds between the restart acknowledgment and the process re-execution.
@@ -167,15 +173,96 @@ def normalize_overrides(overrides: dict[str, Any], document: str = DOCUMENT) -> 
     return overrides
 
 
+def override_paths(state_dir: Path) -> dict[str, Path]:
+    """Files of the component document, when the component folder is present."""
+    folder = state_dir / OVERRIDE_DIRNAME
+    found = {"folder": folder}
+    for name in ("config.json5", "descriptor.json5"):
+        path = folder / name
+        if path.is_file():
+            found[name.rsplit(".", 1)[0]] = path
+    return found
+
+
+def build_override(service: Service, state_dir: Path, dotenv: dict[str, str]) -> dict[str, Any]:
+    """Register the component document and merge it onto the main section.
+
+    The component file is a partial update (SPEC.md 10.1): it is merged onto
+    `includes.conf2`, never written over it, and the base stays on disk.
+    """
+    paths = override_paths(state_dir)
+    if "config" not in paths or "descriptor" not in paths:
+        return {"ok": False, "reason": "no component document", "changed": []}
+    service.register(
+        OVERRIDE_DOCUMENT,
+        paths["config"],
+        paths["descriptor"].read_text(encoding="utf-8"),
+        resolver=Resolver(dotenv=dotenv),
+    )
+    loaded = service.load(OVERRIDE_DOCUMENT, principal=Principal.demo())
+    if loaded.invalid_on_disk:
+        raise Demo2Error(f"Override document is invalid: {loaded.reason}")
+    return {"ok": True, "effective": loaded.effective, "paths": paths}
+
+
+# The component document is merged with the library default: the base wins every
+# conflict, so the update fills gaps and deep-merges objects (SPEC_.md 5).
+MERGE_PREFER = "base"
+
+
+def merged_override(host: Any) -> dict[str, Any]:
+    """The effective value of the merged section and what the update changed."""
+    service = host.service
+    if OVERRIDE_DOCUMENT not in service.documents:
+        return {"ok": False, "reason": "no component document", "changed": []}
+    update = service.states.get(OVERRIDE_DOCUMENT)
+    base = service.states.get(DOCUMENT)
+    if update is None or base is None:
+        return {"ok": False, "reason": "not loaded", "changed": []}
+    section = ((base.effective.get("includes") or {}).get(OVERRIDE_DOCUMENT) or {})
+    merged = merge(section, update.effective, prefer=MERGE_PREFER)
+    return {
+        "ok": True,
+        "document": OVERRIDE_DOCUMENT,
+        "mount": OVERRIDE_MOUNT,
+        "prefer": MERGE_PREFER,
+        "base": section,
+        "merged": merged,
+        "changed": changed_paths(section, merged),
+        "from_update": changed_paths(section, update.effective),
+        "revision": update.revision,
+    }
+
+
+def changed_paths(base: Any, merged: Any, prefix: str = "") -> list[str]:
+    """Every path whose value differs between the base section and the merge."""
+    if not isinstance(base, dict) or not isinstance(merged, dict):
+        return [] if base == merged else [prefix or "/"]
+    out: list[str] = []
+    for key, value in merged.items():
+        path = f"{prefix}/{key}"
+        if key not in base:
+            out.append(path)
+        elif isinstance(value, dict) and isinstance(base[key], dict):
+            out.extend(changed_paths(base[key], value, path))
+        elif base[key] != value:
+            out.append(path)
+    return out
+
+
 def build(config_path: Path, descriptor_path: Path, env_path: Path, overrides: dict[str, Any]):
     """Register the document and return (service, settings, effective)."""
     dotenv = load_env_file(env_path)
     settings = Settings(backup_depth=5, lock_timeout_seconds=5.0)
     service = Service(settings, audit=lambda name, payload: LOGGER.info("audit %s %s", name, sorted(payload)))
+    override_descriptor = override_paths(config_path.parent).get("descriptor")
     service.register(
         DOCUMENT,
         config_path,
         descriptor_path.read_text(encoding="utf-8"),
+        # The component descriptor owns the shared `typedef`s: the main
+        # descriptor may use them without redeclaring them (SPEC.md 4.6.10).
+        typedef_sources=[override_descriptor.read_text(encoding="utf-8")] if override_descriptor else [],
         # `.env` is data for the resolver; the process environment has priority,
         # exactly as the single global policy of SPEC.md section 6 requires.
         resolver=Resolver(dotenv=dotenv),
@@ -185,6 +272,7 @@ def build(config_path: Path, descriptor_path: Path, env_path: Path, overrides: d
         raise Demo2Error(
             f"Configuration is invalid: {loaded.reason}. Fix {config_path.name} or run with a valid backup."
         )
+    build_override(service, config_path.parent, dotenv)
     if overrides:
         # Startup overrides apply to the running process only.
         deep_update(loaded.effective, normalize_overrides(overrides))
@@ -296,6 +384,8 @@ def _route(host: Host, environ, start_response, method: str, route: str, restart
                     "descriptor_revision": host.service.documents[DOCUMENT].descriptor.revision,
                     "applied": host.applied,
                     "reloads": host.reloads,
+                    "documents": sorted(host.service.documents),
+                    "override": merged_override(host),
                     "ai": {"enabled": host.agent is not None, "model": host.agent.model if host.agent else None},
                 },
             )

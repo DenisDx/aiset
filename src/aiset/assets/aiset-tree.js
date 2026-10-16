@@ -101,6 +101,7 @@
     this.expanded = {};
     this.rawMode = {};
     this.envDraft = {};
+    this.hiddenTemplate = {};
     this._envNames = {};
     this.handlers = {};
     this.busy = false;
@@ -259,6 +260,7 @@
         self.revision = tree.revision;
         self.descriptorRevision = tree.descriptor_revision;
         self._expandDefault();
+        self.hiddenTemplate = {};
         self._render();
         self._setStatus("ok", "Loaded revision " + String(tree.revision).slice(0, 12) +
           (tree.invalid_on_disk ? " — invalid on disk, showing the last valid state" : ""));
@@ -266,7 +268,11 @@
         return tree;
       })
       .catch(function (error) {
-        self._setStatus("error", "Load failed: " + error.message);
+        /* A network-level failure says nothing about the document, so name the
+         * cause a user can act on: the host is not answering. */
+        self._setStatus("error", /failed to fetch|networkerror/i.test(error.message)
+          ? "Load failed: the host did not answer. Is demo2 still running?"
+          : "Load failed: " + error.message);
         self._setIssues(error.issues);
         throw error;
       });
@@ -302,9 +308,21 @@
     return this.pending.map(function (item) { return Object.assign({}, item.operation); });
   };
 
+  /* Writing what the file already holds is not a change: it must not stage an
+   * operation, must not mark the row dirty, and must leave the staged list
+   * empty. Entering the environment mode and leaving it again untouched is the
+   * common case. */
+  TreeEditor.prototype._isNoop = function (operation) {
+    if (!operation || operation.op !== "set") { return false; }
+    var node = this._find(operation.path || "");
+    if (!node || node.exists === false) { return false; }
+    return node.value_text === operation.value_text;
+  };
+
   TreeEditor.prototype.stageOperations = function (operations, source) {
     var self = this;
     (operations || []).forEach(function (operation) {
+      if (self._isNoop(operation)) { return; }
       var key = operation.op + "|" + (operation.path || "") + "|" + (operation.from || "");
       var existing = -1;
       self.pending.forEach(function (item, index) {
@@ -320,10 +338,14 @@
     return this.getPendingOperations();
   };
 
+  /* Dropping a staged operation also restores the view: the row goes back to
+   * the substitution the file holds, with its name and its drop button. */
   TreeEditor.prototype.revert = function (path) {
     this.pending = this.pending.filter(function (item) {
       return item.operation.path !== path && item.operation.from !== path;
     });
+    delete this.hiddenTemplate[path];
+    delete this.envDraft[path];
     this._renderPending();
     this._render();
   };
@@ -430,14 +452,179 @@
   TreeEditor.prototype._render = function () {
     this._envNames = {};
     this.treeNode.innerHTML = "";
-    if (!this.tree || !this.tree.node) {
+    var view = this._viewTree();
+    if (!view || !view.node) {
       this.treeNode.appendChild(element("p", { text: "This path does not exist yet. Apply a change to create it." }));
       this._renderPending();
       return;
     }
-    this.treeNode.appendChild(this._renderNode(this.tree.node, true));
+    this.treeNode.appendChild(this._renderNode(view.node, true));
     this._renderPending();
     this._loadEnvPresence();
+  };
+
+  /* -- the staged view -------------------------------------------------
+   * The snapshot on disk never moves while the user works, so the editor draws
+   * the tree the user currently expects: a staged value is shown in its control,
+   * a staged addition appears, a staged removal stays visible but is marked as
+   * deleted, and a staged move reorders. Nothing here touches the store. */
+  TreeEditor.prototype._viewTree = function () {
+    if (!this.pending.length || !this.tree || !this.tree.node) { return this.tree; }
+    var index = this._pendingIndex();
+    var node = this._projectNode(this.tree.node, "", index);
+    return node ? Object.assign({}, this.tree, { node: node }) : this.tree;
+  };
+
+  TreeEditor.prototype._pendingIndex = function () {
+    var sets = {}, removes = {}, adds = {}, moves = {};
+    this.pending.forEach(function (item) {
+      var op = item.operation;
+      var path = op.path || op.from || "";
+      if (op.op === "set") { sets[path] = op; }
+      else if (op.op === "remove") { removes[path] = true; }
+      else if (op.op === "add") {
+        var parent = path.slice(0, path.lastIndexOf("/"));
+        (adds[parent] = adds[parent] || []).push({ path: path, operation: op });
+      } else if (op.op === "move") {
+        /* The target index lives in the destination path, the entry to move in
+         * `from`; both sides matter, so both are kept. */
+        var target = path.slice(0, path.lastIndexOf("/"));
+        (moves[target] = moves[target] || []).push({ from: op.from || op.path, to: path.slice(path.lastIndexOf("/") + 1), operation: op });
+      }
+    });
+    return { sets: sets, removes: removes, adds: adds, moves: moves };
+  };
+
+  /* Returns the same node object when nothing below it changed, so an untouched
+   * subtree is not copied on every render. */
+  TreeEditor.prototype._projectNode = function (node, path, index) {
+    if (!node) { return null; }
+    var ownSet = index.sets[path];
+    var ownRemove = index.removes[path];
+    var ownAdds = index.adds[path] || [];
+    var ownMoves = index.moves[path] || [];
+    var base = node.children || [];
+    var items = node.items || [];
+    var touched = ownSet || ownRemove || ownAdds.length || ownMoves.length;
+    var children = null;
+    var projectedItems = null;
+
+    if (base.length) {
+      var copy = [];
+      var changedChild = false;
+      for (var i = 0; i < base.length; i += 1) {
+        var childPath = path + "/" + escapeToken(base[i].path.split("/").pop());
+        var projected = this._projectNode(base[i], childPath, index);
+        if (projected !== base[i]) { changedChild = true; }
+        copy.push(projected);
+      }
+      if (changedChild || ownAdds.length || ownMoves.length) { children = copy; }
+    }
+    if (items.length) {
+      var itemCopy = [];
+      var itemChanged = false;
+      for (var j = 0; j < items.length; j += 1) {
+        var itemPath = path + "/" + items[j].path.split("/").pop();
+        var projectedItem = this._projectNode(items[j], itemPath, index);
+        if (projectedItem !== items[j]) { itemChanged = true; }
+        itemCopy.push(projectedItem);
+      }
+      if (itemChanged || ownAdds.length || ownMoves.length) { projectedItems = itemCopy; }
+    }
+
+    /* Order of the preview: what the container holds now, then the staged
+     * additions, then the staged reorder. This is a preview of the batch the
+     * user assembled, not a simulation of index shifts. */
+    var additions = [];
+    for (var k = 0; k < ownAdds.length; k += 1) {
+      additions.push(this._newNode(ownAdds[k].path, ownAdds[k].operation.value_text, node));
+    }
+    if (additions.length) {
+      var intoArray = node.type === "array";
+      for (var a = 0; a < additions.length; a += 1) { additions[a].label = this._addLabel(node, additions[a]); }
+      if (intoArray) {
+        projectedItems = (projectedItems || items).concat(additions);
+      } else {
+        children = (children || base).concat(additions);
+      }
+    }
+    if (ownMoves.length) {
+      if (projectedItems || items.length) { projectedItems = this._applyMoves(projectedItems || items, ownMoves); }
+      if (children || base.length) { children = this._applyMoves(children || base, ownMoves); }
+    }
+
+    if (!touched && !children && !projectedItems) { return node; }
+    var view = Object.assign({}, node);
+    if (children) { view.children = children; }
+    if (projectedItems) { view.items = projectedItems; }
+    if (ownSet) {
+      /* Only the displayed value changes: the view modes stay as the user left
+       * them, so a dropped substitution does not come back on its own. */
+      view.value_text = ownSet.value_text;
+      view.staged = true;
+    }
+    if (ownRemove) { view.pending_delete = true; }
+    return view;
+  };
+
+  TreeEditor.prototype._applyMoves = function (list, moves) {
+    var out = list.slice();
+    moves.forEach(function (move) {
+      var token = move.from.split("/").pop();
+      var at = -1;
+      for (var i = 0; i < out.length; i += 1) {
+        if (out[i].path.split("/").pop() === token) { at = i; break; }
+      }
+      if (at < 0) { return; }
+      var moved = out.splice(at, 1)[0];
+      var to = Number(move.to);
+      if (isNaN(to)) { return; }
+      /* "-"/"*" and out-of-range indexes mean the end, as in the service. */
+      if (move.to === "-" || move.to === "*") { to = out.length; }
+      out.splice(Math.max(0, Math.min(out.length, to)), 0, moved);
+    });
+    return out;
+  };
+
+  /* A staged addition has no snapshot node yet: build one from the descriptor
+   * shape of the parent, so the control renders the value that will be written. */
+  /* "-"/"*" is the request form of an append; the row needs a real index. */
+  TreeEditor.prototype._addLabel = function (parent, node) {
+    var tail = node.path.slice(node.path.lastIndexOf("/") + 1);
+    if (parent.type === "array") {
+      if (tail === "-" || tail === "*") { return String((parent.items || []).length); }
+    }
+    return tail;
+  };
+
+  TreeEditor.prototype._newNode = function (path, valueText, parent) {
+    var field = (parent && parent.field) || null;
+    var declared = null;
+    if (field) {
+      if (field.additional_children) { declared = field.additional_children; }
+      else if (parent.type === "array" && field.children_options && field.children_options.length) {
+        declared = field.children_options[0];
+      } else if (parent.type === "object" && field.children) {
+        declared = field.children[path.split("/").pop()] || null;
+      }
+    }
+    var node = {
+      path: path,
+      exists: true,
+      staged: true,
+      access_denied: false,
+      origin: { kind: "staged" },
+      value_text: valueText === undefined || valueText === null ? "" : valueText,
+      capabilities: { edit: true, add: false, remove: true, reorder: false, add_child: false, remove_child: false },
+      comments: [],
+      children: [],
+      items: [],
+      type: (declared && declared.type) || "undeclared",
+      kind: parent && parent.type === "array" ? "array_item" : "leaf",
+      field: declared || null,
+      apply: (declared && declared.apply) || (parent && parent.apply) || null,
+    };
+    return node;
   };
 
   TreeEditor.prototype._renderPending = function () {
@@ -469,31 +656,47 @@
   TreeEditor.prototype._renderNode = function (node, isRoot) {
     var self = this;
     var container = element("div", {
-      class: "aiset-tree-node", role: "treeitem",
-      dataset: { path: node.path, absent: String(node.exists === false) }
+      class: "aiset-tree-node" + (node.pending_delete ? " is-deleted" : "") + (node.staged ? " is-staged" : ""),
+      role: "treeitem",
+      dataset: {
+        path: node.path,
+        absent: String(node.exists === false),
+        deleted: String(!!node.pending_delete),
+        staged: String(!!node.staged)
+      }
     });
     var row = element("div", { class: "aiset-tree-row" });
     var children = this._visibleChildren(node);
     var composite = children.length;
     var isOpen = !!this.expanded[node.path];
 
-    var toggle = element("button", {
-      type: "button",
-      class: "aiset-tree-toggle",
-      text: composite ? (isOpen ? "-" : "+") : "",
-      "aria-expanded": composite ? String(isOpen) : null,
-      "aria-label": (isOpen ? "Collapse " : "Expand ") + (node.path || "root")
-    });
+    /* An expandable node gets + and -; a leaf gets a coloured mark of its type
+     * in the very same place, so the column always says what the node is. */
+    var toggle = composite
+      ? element("button", {
+        type: "button",
+        class: "aiset-tree-toggle",
+        text: isOpen ? "-" : "+",
+        "aria-expanded": String(isOpen),
+        "aria-label": (isOpen ? "Collapse " : "Expand ") + (node.path || "root")
+      })
+      : element("span", {
+        class: "aiset-tree-toggle aiset-tree-toggle-type",
+        "aria-hidden": "true",
+        title: (node.type || "?") + ": nothing to expand"
+      });
     if (composite) {
       toggle.addEventListener("click", function () {
         self.expanded[node.path] = !self.expanded[node.path];
         self._render();
       });
+    } else {
+      toggle.appendChild(this._typeGlyph(node));
     }
     row.appendChild(toggle);
 
     var name = isRoot ? (node.path || "/") : node.path.split("/").pop();
-    var labelNode = element("span", { class: "aiset-tree-name", text: name });
+    var labelNode = element("span", { class: "aiset-tree-name", text: node.label || name });
     labelNode.setAttribute("title", this._tooltip(node));
     row.appendChild(labelNode);
     row.appendChild(this._badges(node));
@@ -538,6 +741,8 @@
     if (node.field && node.field.required) { wrap.appendChild(badge("required", "req")); }
     if (node.field && node.field.nullable) { wrap.appendChild(badge("nullable", "req")); }
     if (this._pendingFor(node.path)) { wrap.appendChild(badge("dirty", "dirty")); }
+    if (node.staged) { wrap.appendChild(badge("new", "new")); }
+    if (node.pending_delete) { wrap.appendChild(badge("deleted", "deleted")); }
     return wrap;
   };
 
@@ -582,19 +787,14 @@
     /* An object or array is edited through its children, or as raw source. */
     if (isComposite(node)) { return null; }
     if (!caps.edit) {
-      var stored = this._valueText(node);
-      /* Nothing to show: name the type instead of an empty control. */
-      if (!stored) { return this._typeGlyph(node); }
-      return element("span", { class: "aiset-tree-value readonly", text: stored });
+      return element("span", { class: "aiset-tree-value readonly", text: this._valueText(node) });
     }
     /* Raw mode shows the stored fragment below the row instead. */
     if (this.rawMode[node.path]) { return null; }
-    if (this._templateInfo(node) || this.envDraft[node.path]) {
-      return this._templateControl(node);
-    }
+    if (this._showsTemplate(node)) { return this._templateControl(node); }
 
     var wrap = element("span", { class: "aiset-tree-value" });
-    var current = node.value_text === null || node.value_text === undefined ? "" : node.value_text;
+    var current = this._plainValueText(node);
     /* An unchecked box cannot say whether a bool is stored or false. */
     if (node.type === "bool" && node.exists === false) { wrap.appendChild(this._typeGlyph(node)); }
     var control = this._typedControl(node, current, function (staged) { self._stage(node, staged); });
@@ -671,6 +871,26 @@
 
   /* ${VAR:-fallback}: the variable name and the fallback are edited apart, so a
    * substitution is never lost by changing the value it falls back to. */
+  /* A node shows the two template controls while its substitution is visible;
+   * after the user dropped it, the row reads as the plain value it became. */
+  TreeEditor.prototype._showsTemplate = function (node) {
+    if (this.hiddenTemplate[node.path]) { return false; }
+    return !!(this._templateInfo(node) || this.envDraft[node.path]);
+  };
+
+  /* The value the plain control shows: what is stored, or the inline fallback of
+   * a substitution the user just dropped. */
+  TreeEditor.prototype._plainValueText = function (node) {
+    if (!this.hiddenTemplate[node.path]) {
+      return node.value_text === null || node.value_text === undefined ? "" : node.value_text;
+    }
+    var info = this._templateInfo(node) || { fallback: null };
+    if (info.fallback === null || info.fallback === undefined) {
+      return node.type === "string" ? '""' : "null";
+    }
+    return node.type === "string" ? JSON.stringify(info.fallback) : info.fallback;
+  };
+
   /* What the row shows: the staged draft when there is one, the stored
    * substitution otherwise. */
   TreeEditor.prototype._currentTemplate = function (node) {
@@ -713,8 +933,11 @@
       self.envDraft[node.path] = { name: written.name, fallback: plain };
       self._stageTemplate(node, written.name, plain);
     }));
-    wrap.appendChild(this._button("env-off", "Drop the substitution and keep the inline value", "text:\u21ba",
-      function () { self._dropTemplate(node); }));
+    if (info.name) {
+      /* Nothing to drop while the name field is still empty. */
+      wrap.appendChild(this._button("env-off", "Drop the substitution and keep the inline value", "text:\u2298",
+        function () { self._dropTemplate(node); }));
+    }
     return wrap;
   };
 
@@ -722,20 +945,25 @@
     this.stageOperations([{ op: "set", path: node.path, value_text: "${" + name + ":-" + fallback + "}" }], "user");
   };
 
-  /* An empty variable name means a plain value again. */
+  /* Drop the substitution: this node goes back to the value the file holds.
+   * A substitution staged a moment ago must be forgotten first, otherwise
+   * pressing this button would leave exactly what it claims to remove. */
   TreeEditor.prototype._dropTemplate = function (node) {
     var info = this._currentTemplate(node) || { fallback: this._plainText(node) };
     var fallback = info.fallback;
     if (fallback === null || fallback === undefined) { fallback = ""; }
     if (fallback === "" && node.type !== "string") {
       var declared = node.field && node.field.default !== undefined ? node.field.default : null;
-      fallback = declared === null ? "" : JSON.stringify(declared);
-      if (declared === null) { fallback = node.type === "bool" ? "false" : "0"; }
+      fallback = declared === null ? (node.type === "bool" ? "false" : "0") : JSON.stringify(declared);
     }
     delete this.envDraft[node.path];
-    this.stageOperations([
-      { op: "set", path: node.path, value_text: node.type === "string" ? JSON.stringify(fallback) : fallback }
-    ], "user");
+    this.revert(node.path);
+    /* After the revert: reverting clears the view, and the dropped row must
+     * stay dropped. */
+    this.hiddenTemplate[node.path] = true;
+    var text = node.type === "string" ? JSON.stringify(fallback) : fallback;
+    if (node.exists !== false && node.value_text === text) { this._render(); return; }
+    this.stageOperations([{ op: "set", path: node.path, value_text: text }], "user");
   };
 
   /* The .env button: it switches a plain value into substitution mode. It works
@@ -751,6 +979,7 @@
       title += " (the descriptor allows no substitution here: the server will refuse it)";
     }
     var button = this._button("env", title, "text:.env", function () {
+      delete self.hiddenTemplate[node.path];
       self.envDraft[node.path] = true;
       self._render();
     });
@@ -808,6 +1037,7 @@
    * and validates the fragment; nothing is staged while it is wrong. */
   TreeEditor.prototype._rawEditor = function (node) {
     var self = this;
+    var stored = this._find(node.path) || node;
     var wrap = element("div", { class: "aiset-tree-raw" });
     wrap.appendChild(element("div", {
       class: "aiset-tree-raw-title",
@@ -816,7 +1046,7 @@
     var area = element("textarea", {
       rows: 8, class: "aiset-tree-raw-text", "aria-label": "Raw source of " + node.path
     });
-    area.value = node.value_text === null || node.value_text === undefined ? "" : node.value_text;
+    area.value = stored.value_text === null || stored.value_text === undefined ? "" : stored.value_text;
     area.addEventListener("input", function () { self._fitRaw(area); });
     wrap.appendChild(area);
     this._fitRaw(area);
@@ -935,7 +1165,7 @@
   /* Short coloured mark of the declared type; red is never used. */
   TreeEditor.prototype._typeGlyph = function (node) {
     var entry = TYPE_GLYPHS[node.type] || TYPE_GLYPHS.other;
-    var reason = node.exists === false ? "not stored yet" : "nothing to show";
+    var reason = node.exists === false ? "not stored yet" : "a stored value";
     return element("span", {
       class: "aiset-tree-type " + entry.kind,
       title: node.type + ": " + reason,
@@ -999,6 +1229,19 @@
   };
 
   /* One small button that puts the declared default back. */
+  /* The helper binding of a node gets its own button; without a registered
+   * helper the button says so instead of pretending to work. */
+  TreeEditor.prototype._helperControl = function (node) {
+    var self = this;
+    var found = helperFor(node);
+    var title = found
+      ? "Edit this node with the " + found.tag + " helper"
+      : "This node declares a helper that is not registered";
+    var button = this._button("form", title, "form", function () { self.runHelper(node); });
+    button.disabled = !found || !(node.capabilities || {}).edit;
+    return button;
+  };
+
   /* Always offered, so the row looks the same everywhere; without a declared
    * default, or without write permission, the button says why it is inert. */
   TreeEditor.prototype._defaultControl = function (node) {
@@ -1011,7 +1254,7 @@
     if (already) { title = "Already the default value"; }
     else if (!declared) { title = "This field declares no default value"; }
     else if (!(node.capabilities || {}).edit) { title = "This field is read-only"; }
-    var button = this._button("default", title, "text:\u21ba", function () {
+    var button = this._button("default", title, "text:\u2302", function () {
       self._stage(node, valueText);
     });
     button.disabled = already || !declared || !(node.capabilities || {}).edit;
@@ -1032,9 +1275,14 @@
       wrap.appendChild(raw);
       /* A plain value can be turned into a substitution; a node that already
        * has one shows its name and fallback instead, so no button there. */
-      if (!isComposite(node) && !this._templateInfo(node) && !this.envDraft[node.path]) {
+      if (!isComposite(node) && !this._showsTemplate(node) && !this.envDraft[node.path]) {
         wrap.appendChild(this._envButton(node));
       }
+    }
+    if ((node.field || {}).helper) { wrap.appendChild(this._helperControl(node)); }
+    if (this._pendingFor(node.path)) {
+      wrap.appendChild(this._button("revert", "Revert the staged change(s) of this node", "text:\u21ba",
+        function () { self.revert(node.path); }));
     }
     var reset = this._defaultControl(node);
     if (reset) { wrap.appendChild(reset); }
@@ -1161,6 +1409,8 @@
     number: { glyph: "n", kind: "number" },
     string: { glyph: '"', kind: "string" },
     bool: { glyph: "b", kind: "bool" },
+    array: { glyph: "[", kind: "container" },
+    object: { glyph: "{", kind: "container" },
     other: { glyph: "?", kind: "other" }
   };
 
@@ -1173,7 +1423,8 @@
     code: ["M6.2 2.8C4.8 2.8 4.8 4.2 4.8 5.6v1.2c0 1-.6 1.6-1.6 1.6 1 0 1.6.6 1.6 1.6v1.2c0 1.4 0 2.8 1.4 2.8",
            "M9.8 2.8c1.4 0 1.4 1.4 1.4 2.8v1.2c0 1 .6 1.6 1.6 1.6-1 0-1.6.6-1.6 1.6v1.2c0 1.4 0 2.8-1.4 2.8"],
     env: ["M8 1.9a3.1 3.1 0 0 1 1.6 5.9c-.5.4-.6.8-.6 1.3v.4H7v-.4c0-.5-.1-.9-.6-1.3A3.1 3.1 0 0 1 8 1.9z",
-          "M7 11.2h2v1.2H7z", "M7 13.4h2v.8H7z"]
+          "M7 11.2h2v1.2H7z", "M7 13.4h2v.8H7z"],
+    form: ["M3 2.6h10v10.8H3z", "M5.4 5.2h5.2M5.4 7.8h5.2M5.4 10.4h3"]
   };
 
   function icon(name) {
@@ -1265,6 +1516,86 @@
     return new TreeEditor(host, options || {});
   }
 
+  /* -- helpers (SPEC.md 18.2) ----------------------------------------
+   * A descriptor binds a node to a helper by `tag`; the tag selects an
+   * implementation from this registry. Nothing is loaded by guessing a file
+   * name or by executing descriptor text. */
+  var helpers = {};
+
+  function registerHelper(tag, factory) {
+    helpers[tag] = factory;
+    return api;
+  }
+
+  function helperFor(node) {
+    var binding = node && node.field && node.field.helper;
+    if (!binding || !binding.tag || !helpers[binding.tag]) { return null; }
+    return { tag: binding.tag, factory: helpers[binding.tag], binding: binding };
+  }
+
+  /* Opens the bound helper. It resolves with `{value_text}` once the user
+   * submits, or with null on cancel; the result is staged through the same
+   * validate-then-stage path the raw editor uses. */
+  TreeEditor.prototype.runHelper = function (node) {
+    var self = this;
+    var found = helperFor(node);
+    if (!found) {
+      this._setStatus("error", "No helper is registered for this node.");
+      return Promise.resolve(null);
+    }
+    return Promise.resolve(found.factory(this, node, found.binding)).then(function (result) {
+      if (!result || typeof result.value_text !== "string") { return null; }
+      return self._stageRaw(node, result.value_text);
+    });
+  };
+
+  /* The shipped default: a modal form over the visible children of the node,
+   * which is what an element typed through a `typedef` needs. */
+  registerHelper("node_form", function (editor, node, binding) {
+    var children = editor._visibleChildren(node);
+    if (!children.length) { return null; }
+    return new Promise(function (resolve) {
+      var dialog = element("div", { class: "aiset-form", role: "dialog", "aria-modal": "true" });
+      var heading = (binding && binding.settings && binding.settings.note) || node.path || "node";
+      dialog.appendChild(element("h4", { class: "aiset-form-title", text: heading }));
+      var rows = [];
+      children.forEach(function (child) {
+        var key = (child.path || "").split("/").pop();
+        var current = child.value_text === null || child.value_text === undefined ? "" : child.value_text;
+        var row = element("div", { class: "aiset-form-row" });
+        row.appendChild(element("label", { class: "aiset-form-label", text: key + " · " + (child.type || "?") }));
+        var field = element("span", { class: "aiset-form-field" });
+        var control = editor._typedControl(child, current, function (staged) { row.dataset.staged = staged; });
+        row.dataset.staged = current;
+        control.className = (control.className || "") + " aiset-form-control";
+        field.appendChild(control);
+        row.appendChild(field);
+        rows.push({ key: key, row: row });
+        dialog.appendChild(row);
+      });
+      var actions = element("div", { class: "aiset-form-actions" });
+      var cancel = element("button", { type: "button", text: "Cancel", title: "Close without staging" });
+      cancel.addEventListener("click", function () { dialog.remove(); resolve(null); });
+      var submit = element("button", { type: "button", text: "Stage", title: "Validate and stage this node" });
+      submit.addEventListener("click", function () {
+        var body = rows.map(function (item) {
+          var key = /^[A-Za-z_$][\w$]*$/.test(item.key) ? item.key : JSON.stringify(item.key);
+          return "  " + key + ": " + (item.row.dataset.staged || "");
+        }).join(",\n");
+        dialog.remove();
+        resolve({ value_text: "{\n" + body + "\n}\n" });
+      });
+      actions.appendChild(cancel);
+      actions.appendChild(submit);
+      dialog.appendChild(actions);
+      document.body.appendChild(dialog);
+      var first = dialog.querySelector("input, textarea, select");
+      if (first && first.focus) { first.focus(); }
+    });
+  });
+
+  api.registerHelper = registerHelper;
+  api.helpers = helpers;
   api.renderTreeEditor = renderTreeEditor;
   api.mountTree = mountTree;
   api.TreeEditor = TreeEditor;

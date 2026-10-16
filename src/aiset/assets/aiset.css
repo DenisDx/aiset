@@ -133,7 +133,7 @@
 .aiset-tree-type.int, .aiset-tree-type.number { color: #1a7f37; }
 .aiset-tree-type.string { color: #0969da; }
 .aiset-tree-type.bool { color: #7c3aed; }
-.aiset-tree-type.other { color: #6b7280; }
+.aiset-tree-type.other, .aiset-tree-type.container { color: #6b7280; }
 
 .aiset-tree-null { accent-color: #7c3aed; width: 14px; height: 14px; margin: 0; vertical-align: middle; cursor: pointer; }
 .aiset-tree-value :disabled { opacity: 0.7; cursor: not-allowed; font-style: italic; }
@@ -183,3 +183,50 @@
 }
 .aiset-tree-env-state:disabled { opacity: 0.45; cursor: default; }
 .aiset-tree-env-state.on { color: #1a7f37; border-color: #1a7f37; }
+
+.aiset-form {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  height: fit-content;
+  z-index: 20;
+  max-width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: #f6f8fa;
+  color: #1c1f24;
+  border: 1px solid #0969da;
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+.aiset-form-title { margin: 0 0 10px; font-size: 12px; color: #0969da; }
+.aiset-form-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.aiset-form-label { flex: 0 0 190px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #6b7280; }
+.aiset-form-field { display: inline-flex; align-items: center; gap: 6px; }
+.aiset-form-control { background: #fff; border: 1px solid #c6ccd4; border-radius: 4px; padding: 3px 6px; min-width: 160px; font-size: 12px; }
+.aiset-form-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+.aiset-tree-toggle-type {
+  display: inline-grid;
+  place-items: center;
+  border-color: transparent;
+  background: transparent;
+  cursor: default;
+}
+.aiset-tree-toggle-type .aiset-tree-type { min-width: 16px; height: 16px; font-size: 11px; font-weight: 700; }
+
+.aiset-tree-toggle {
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.aiset-tree-badge.new { color: #1a7f37; border-color: #1a7f37; }
+.aiset-tree-badge.deleted { color: #b42318; border-color: #b42318; }
+.aiset-tree-node.is-deleted > .aiset-tree-row { opacity: 0.55; }
+.aiset-tree-node.is-deleted > .aiset-tree-row .aiset-tree-name,
+.aiset-tree-node.is-deleted > .aiset-tree-row .aiset-tree-value { text-decoration: line-through; }
+.aiset-tree-node.is-staged > .aiset-tree-row .aiset-tree-name { color: #1a7f37; }

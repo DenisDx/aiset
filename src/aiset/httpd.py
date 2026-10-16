@@ -15,7 +15,7 @@ from urllib.parse import parse_qs
 
 from . import __version__
 from .errors import AisetError, BadRequest, PayloadTooLarge
-from .merge import merge
+from .merge import PREFERENCES, merge
 from .service import Principal, Service
 
 JSON_HEADERS = [("Content-Type", "application/json; charset=utf-8")]
@@ -179,7 +179,14 @@ def _handle_api(
         payload = _body(environ, service)
         if "base" not in payload or "update" not in payload:
             raise BadRequest("merge requires 'base' and 'update'")
-        return _json(start_response, 200, {"ok": True, "merged": merge(payload["base"], payload["update"])})
+        prefer = str(payload.get("prefer") or "base")
+        if prefer not in PREFERENCES:
+            raise BadRequest(f"'prefer' must be one of {list(PREFERENCES)}, got {prefer!r}")
+        return _json(
+            start_response,
+            200,
+            {"ok": True, "prefer": prefer, "merged": merge(payload["base"], payload["update"], prefer=prefer)},
+        )
 
     raise AisetError("Unknown route", code="NOT_FOUND")
 

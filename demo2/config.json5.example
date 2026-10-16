@@ -139,4 +139,44 @@
       password: "${DEMO2_FIXTURE_PASSWORD:-}",
     },
   },
+
+  // -- includes -------------------------------------------------------
+  // The base of the component document. demo2/conf2/config.json5 is merged onto
+  // includes.conf2 (SPEC.md 10.1) and the host reports what landed.
+  //
+  // The merge keeps the base on every conflict (SPEC_.md correction 5), so this
+  // base is written to show all three cases:
+  //   value1..value3  present in both -> the base value survives;
+  //   value4          only in the update -> the update value is taken;
+  //   value5          only in the base  -> kept, an update cannot delete;
+  //   innerSubValue1  only in the update, nested deep -> merged in;
+  //   innerSubValue2  only in the base  -> kept next to it.
+  includes: {
+    conf2: {
+      value1: "base value",
+      value2: [1, 2],
+      value3: false,
+      value5: "only in the base",
+
+      //AGENT: both elements below are typed from conf2/descriptor.json5.
+      typedefvalue1: {
+        subValue1: "sub base",
+        subValue2: 41,
+        subValue3: true,
+        subValue4: {
+          innerSubValue2: "only in the base",
+        },
+        subValue5: ["one base item"],
+      },
+      typedefvalue2: {
+        subValue1: "sub base 2",
+        subValue2: 43,
+        subValue3: true,
+        subValue4: {
+          innerSubValue2: "only in the base",
+        },
+        subValue5: ["one base item"],
+      },
+    },
+  },
 }

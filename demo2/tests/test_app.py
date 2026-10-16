@@ -36,6 +36,9 @@ from env import load_env_file, parse_env  # noqa: E402
 def workspace(tmp_path: Path) -> Path:
     for name in ("config.json5.example", "descriptor.json5", ".env.example"):
         shutil.copy(DEMO2 / name, tmp_path / name)
+    # The component folder ships with the host: its descriptor owns the shared
+    # `typedef`s and its file is the override update.
+    shutil.copytree(DEMO2 / "conf2", tmp_path / "conf2")
     return tmp_path
 
 
@@ -169,10 +172,22 @@ def test_ai_disabled_returns_no_agent(workspace):
     assert build_agent({"ai": {"enabled": False}}) is None
 
 
+def component_templates() -> dict:
+    """Templates the component descriptor owns (SPEC.md 4.6.10)."""
+    from aiset.descriptor import _collect_typedefs, parse_descriptor
+
+    source = (DEMO2 / "conf2" / "descriptor.json5").read_text(encoding="utf-8")
+    return _collect_typedefs(parse_descriptor(source))
+
+
 def test_descriptor_is_strict_clean():
     from aiset.descriptor import validate_descriptor
 
-    diagnostic = validate_descriptor((DEMO2 / "descriptor.json5").read_text(encoding="utf-8"), mode="strict")
+    diagnostic = validate_descriptor(
+        (DEMO2 / "descriptor.json5").read_text(encoding="utf-8"),
+        mode="strict",
+        known_templates=component_templates(),
+    )
     assert diagnostic.valid, [issue.to_dict() for issue in diagnostic.issues]
 
 
@@ -184,6 +199,7 @@ def test_example_configuration_validates():
         "demo2",
         DEMO2 / "config.json5.example",
         (DEMO2 / "descriptor.json5").read_text(encoding="utf-8"),
+        typedef_sources=[(DEMO2 / "conf2" / "descriptor.json5").read_text(encoding="utf-8")],
     )
     loaded = service.load("demo2", principal=Principal.demo())
     assert loaded.invalid_on_disk is False, [i.to_dict() for i in loaded.issues]
@@ -352,6 +368,72 @@ def test_launcher_requires_the_local_interpreter(workspace):
     assert ".venv/bin/python" in script
     assert "python3 " not in script.replace("python3 -m venv", "")
     assert script.startswith("#!/bin/sh") and "set -eu" in script
+
+
+def test_component_document_merges_with_the_base_in_front(started):
+    """SPEC_.md correction 5: the base wins, the update only fills the gaps."""
+    from app import merged_override
+
+    host, config, _descriptor, _env = started
+    result = merged_override(host)
+    assert result["ok"] is True
+    assert result["document"] == "conf2" and result["mount"] == "includes.conf2"
+    assert result["prefer"] == "base"
+
+    merged = result["merged"]
+    assert merged["value1"] == "base value", "a scalar present in both keeps the base"
+    assert merged["value2"] == [1, 2], "an array present in both keeps the base"
+    assert merged["value3"] is False, "a flag present in both keeps the base"
+    assert merged["value4"] == "new value", "a field only in the update is taken"
+    assert merged["value5"] == "only in the base", "a field only in the base is kept"
+    assert merged["typedefvalue1"]["subValue4"] == {
+        "innerSubValue1": "inner value",       # only in the update, merged in
+        "innerSubValue2": "only in the base",   # only in the base, kept
+    }
+    assert set(result["changed"]) == {
+        "/value4",
+        "/typedefvalue1/subValue4/innerSubValue1",
+        "/typedefvalue2/subValue4/innerSubValue1",
+    }
+    assert "/value1" in result["from_update"], "the update would have won under the old rule"
+    assert "includes" in config.read_text(encoding="utf-8"), "the base file is not overwritten"
+
+
+def test_editing_the_merged_section_always_writes_the_base(started):
+    """A value shown from the update is still edited in the base document."""
+    host, config, _descriptor, _env = started
+    component = config.parent / "conf2" / "config.json5"
+    before = component.read_text(encoding="utf-8")
+    service = host.service
+    loaded = service.load("demo2", principal=Principal.demo())
+    result = service.set(
+        "demo2", "/includes/conf2/value4", '"edited in the base"',
+        expected_revision=loaded.revision,
+        expected_descriptor_revision=loaded.descriptor_revision,
+        principal=Principal.demo(),
+    )
+    assert result.stored is True
+    assert '"edited in the base"' in config.read_text(encoding="utf-8"), "the base holds the change"
+    assert component.read_text(encoding="utf-8") == before, "the component document is untouched"
+
+
+def test_main_descriptor_uses_the_shared_typedefs(started):
+    """The main descriptor compiles only with the component descriptor loaded."""
+    host, _config, _descriptor, _env = started
+    descriptor = host.service.documents["demo2"].descriptor
+    node = descriptor.root.children["includes"].children["conf2"].children["typedefvalue1"]
+    assert node.type == "object", "the template is expanded into a real object"
+    assert set(node.children) == {"subValue1", "subValue2", "subValue3", "subValue4", "subValue5"}
+    assert node.helper["tag"] == "node_form", "the helper binding travels with the template"
+
+
+def test_status_reports_both_documents_and_the_override(started):
+    from app import merged_override
+
+    host, _config, _descriptor, _env = started
+    payload = merged_override(host)
+    assert payload["ok"] is True
+    assert sorted(host.service.documents) == ["conf2", "demo2"]
 
 
 def test_launcher_serves_and_reports_bind_failure(workspace):

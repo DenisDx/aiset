@@ -1,0 +1,121 @@
+// Descriptor of the conf2 override document (demo2/conf2/config.json5).
+//
+// The file is not a complete configuration: it is an update that the host
+// merges onto the `includes.conf2` section of the main document (SPEC.md 10.1).
+// It therefore declares only the fields it overrides, and every one of them
+// already exists in the base.
+//
+// The two `typedef` declarations below are the contract between the two
+// documents: the main descriptor imports them with `typedef_sources` and uses
+// `type: "typedefvalue1"` wherever it declares the same element, so the base
+// section and the override can never drift apart.
+//
+// Run: .venv/bin/aiset validate-descriptor demo2/conf2/descriptor.json5 --strict
+
+{
+  descriptor_version: "1.0",
+  project: "demo2-conf2",
+  config_version: "1.0",
+
+  root: {
+    type: "object",
+    description: "Override update for the includes.conf2 section of demo2/config.json5",
+
+    children: {
+
+      // -- plain overrides ----------------------------------------------
+      value1: {
+        type: "string",
+        description: "Replaces the base string",
+        apply: "reload",
+      },
+      value2: {
+        type: "array",
+        description: "Replaces the base array as a whole, never element by element",
+        apply: "reload",
+        children: { type: "int", description: "One index" },
+      },
+      value3: {
+        type: "bool",
+        description: "Flips the base flag",
+        apply: "reload",
+      },
+      value4: {
+        type: "string",
+        description: "Replaces the base string of a node the base declared nullable",
+        apply: "reload",
+      },
+
+      // -- typed overrides ----------------------------------------------
+      // The declaration: this node *is* the template named typedefvalue1.
+      typedefvalue1: {
+        typedef: "typedefvalue1",
+        type: "object",
+        description: "Template of the first override element, shared with the main descriptor",
+        apply: "reload",
+        helper: {
+          tag: "node_form",
+          actions: ["create", "edit"],
+          presentation: "modal",
+          settings: { note: "Subform for the shared typedefvalue1 element" },
+        },
+        children: {
+          subValue1: { type: "string", description: "Replaced by the override" },
+          subValue2: { type: "int", minimum: 0, description: "Replaced by the override" },
+          subValue3: { type: "bool", description: "Replaced by the override" },
+          subValue4: {
+            type: "object",
+            description: "Merged recursively: one inner field is replaced, the other survives",
+            children: {
+              innerSubValue1: { type: "string", description: "Replaced by the override" },
+              innerSubValue2: { type: "string", description: "Only in the base, survives the merge" },
+            },
+          },
+          subValue5: {
+            type: "array",
+            description: "Replaced as a whole by the override",
+            children: { type: "string", description: "One item" },
+          },
+        },
+      },
+
+      // The same element, written through the template it declares.
+      typedefvalue1_copy: {
+        type: "typedefvalue1",
+        description: "Uses the template declared above; only the description differs",
+      },
+
+      // The second element declares its own template.
+      typedefvalue2: {
+        typedef: "typedefvalue2",
+        type: "object",
+        description: "Template of the second override element, shared with the main descriptor",
+        apply: "reload",
+        helper: {
+          tag: "node_form",
+          actions: ["create", "edit"],
+          presentation: "modal",
+          settings: { note: "Subform for the shared typedefvalue2 element" },
+        },
+        children: {
+          subValue1: { type: "string", description: "Replaced by the override" },
+          subValue2: { type: "int", minimum: 0, description: "Replaced by the override" },
+          subValue3: { type: "bool", description: "Replaced by the override" },
+          subValue4: {
+            type: "object",
+            description: "Merged recursively",
+            children: {
+              innerSubValue1: { type: "string", description: "Replaced by the override" },
+              innerSubValue2: { type: "string", description: "Only in the base, survives the merge" },
+            },
+          },
+          subValue5: {
+            type: "array",
+            description: "Replaced as a whole by the override",
+            children: { type: "string", description: "One item" },
+          },
+        },
+      },
+    },
+  },
+}

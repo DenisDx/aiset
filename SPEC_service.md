@@ -393,22 +393,31 @@ function: it does not read or write the store, does not use revisions, and does
 not preserve source comments. Its full semantics are in SPEC_.md section 10.1.
 
 ```python
-aiset.merge(base, update) -> merged
+aiset.merge(base, update, *, prefer="base") -> merged
 ```
 
 - `base`, `update`: JSON-compatible values (in practice, objects).
 - `merged`: a new value; the inputs are not mutated.
-- The update has priority; recursion and replacement rules are in SPEC_.md
-  10.1.
+- `prefer` selects who wins a conflict; an unknown value raises `ValueError`.
+  Recursion is identical in both modes; see SPEC_.md correction 5.
+
+| `prefer` | Conflict winner | Use |
+|---|---|---|
+| `"base"` (default) | the base value survives | A component document fills gaps; the main file keeps its own values. |
+| `"update"` | the update replaces the base | An overriding layer, which must be asked for explicitly. |
+
+- Fields only in the update are added, fields only in the base are kept, and an
+  update never deletes a base field in either mode.
 - To apply several updates, chain the calls over a single base
-  (`aiset.merge(aiset.merge(base, u1), u2)`); the host owns that sequencing.
+  (`aiset.merge(aiset.merge(base, u1, prefer=...), u2, prefer=...)`); the host
+  owns that sequencing.
 
 Merge is available in Python. An HTTP route and an MCP tool are optional
 conveniences for hosts that want to merge without importing aiset:
 
 | Method | Route | Body | Result |
 |---|---|---|---|
-| POST | `{base}/merge` | `{"base": {...}, "update": {...}}` | `{"ok": true, "merged": {...}}` |
+| POST | `{base}/merge` | `{"base": {...}, "update": {...}, "prefer": "base"}` | `{"ok": true, "prefer": ..., "merged": {...}}` |
 
 The route uses the same authorization as reads and carries ordinary JSON values
 (no document IDs or revisions are involved).
@@ -422,7 +431,7 @@ update, and save. Its semantics are in SPEC_.md section 10.2.
 Config.load(path, *, mount=None, typedef_sources=None, principal) -> Config
 config.data                        # the JSON-compatible value
 config.origin                      # {file, loaded_at, mount}
-config.update(other) -> Config     # merge other onto this (SPEC_.md 10.1)
+config.update(other, *, prefer="base") -> Config   # merge other onto this
 config.reload()                    # re-read from disk (SPEC_.md 10.4)
 config.save(*, expected_revision, expected_descriptor_revision) -> SetResult
 config.subscribe(paths, callback, *, principal) -> Subscription
@@ -438,8 +447,9 @@ config.rollback(reason)
   collects the list (see the example in SPEC_.md 10.2). Template-name collisions
   across the main descriptor and the sources are descriptor errors (SPEC_.md
   4.3).
-- `config.update(other)`: uses the merge operation (section 14); returns a new
-  Config; the base is not mutated.
+- `config.update(other, *, prefer="base")`: uses the merge operation
+  (section 14); returns a new Config; the base is not mutated. The default keeps
+  the base on a conflict.
 - `config.reload()`: re-reads the file (and layers) from disk and applies the
   external-edit rules of SPEC_.md 10.4.
 - `config.save(...)`: validates, persists, and reports application status
@@ -748,3 +758,12 @@ editor of section 17.
   versioned and documented rather than applied silently.
 - Corrections to the protected `SPEC.md` are proposed in `SPEC_.md`; the
   interfaces of sections 19-21 were added for `demo2` and are recorded there.
+
+### 12.1 Typedef sources in the CLI
+
+`aiset validate-descriptor FILE [--strict] [--typedef OTHER]...` mirrors
+`Service.register`: every `--typedef` file contributes its `typedef`
+definitions before FILE is validated, so a descriptor that uses a template owned
+by a component descriptor is checked exactly as the host compiles it. Repeating
+the option adds several sources, and a duplicated template name is reported as
+an error, exactly as at registration.

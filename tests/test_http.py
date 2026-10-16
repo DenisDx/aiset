@@ -174,6 +174,21 @@ def test_merge_route(client):
         {"base": {"a": {"b": 1}, "keep": True}, "update": {"a": {"c": 2}}},
     )
     assert status == 200 and payload["merged"] == {"a": {"b": 1, "c": 2}, "keep": True}
+    assert payload["prefer"] == "base", "the base decides unless the caller says otherwise"
+
+
+def test_merge_route_accepts_update_priority(client):
+    status, payload = client.post(
+        "/api/settings/merge",
+        {"base": {"a": 1, "keep": 2}, "update": {"a": 9}, "prefer": "update"},
+    )
+    assert status == 200 and payload["merged"] == {"a": 9, "keep": 2}
+    assert payload["prefer"] == "update"
+
+    status, payload = client.post(
+        "/api/settings/merge", {"base": {}, "update": {}, "prefer": "whatever"}
+    )
+    assert status == 400 and payload["error"]["code"] == "BAD_REQUEST"
 
 
 def test_secret_route_denies_readers(service):

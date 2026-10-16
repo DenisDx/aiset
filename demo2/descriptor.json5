@@ -410,6 +410,68 @@
               },
             },
           },
+      },
+
+      },
+
+      // -- includes ---------------------------------------------------
+      // Sections filled from demo2/conf2/config.json5. The host merges that
+      // file onto includes.conf2 (SPEC.md 10.1, SPEC_.md correction 5): the
+      // base decides every conflict, so this section owns its own values and
+      // the component document only adds what is missing.
+      //
+      // Both elements use the templates declared in conf2/descriptor.json5:
+      // the host registers this descriptor with that file in `typedef_sources`,
+      // so the base and the override can never describe different shapes.
+      includes: {
+        type: "object",
+        description: "Base sections that component documents override",
+        apply: "reload",
+        children: {
+          conf2: {
+            type: "object",
+            description: "Base of the conf2 override; the update is demo2/conf2/config.json5",
+            apply: "reload",
+            children: {
+              value1: {
+                type: "string",
+                description: "Overridden with another string",
+                apply: "reload",
+              },
+              value2: {
+                type: "array",
+                description: "Overridden as a whole, so the length changes",
+                apply: "reload",
+                children: { type: "int", description: "One index" },
+              },
+              value3: {
+                type: "bool",
+                default: false,
+                description: "Overridden with the opposite flag",
+                apply: "reload",
+              },
+              value4: {
+                type: "string",
+                description: "Overridden; the base value stays in the file, the update wins",
+                apply: "reload",
+              },
+              value5: {
+                type: "string",
+                description: "Only in the base: an update cannot delete a field, so it survives",
+                apply: "reload",
+              },
+              typedefvalue1: {
+                type: "typedefvalue1",
+                description: "Uses the template declared in conf2/descriptor.json5",
+                apply: "reload",
+              },
+              typedefvalue2: {
+                type: "typedefvalue2",
+                description: "Same template mechanism, second element",
+                apply: "reload",
+              },
+            },
+          },
         },
       },
     },

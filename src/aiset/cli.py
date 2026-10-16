@@ -32,7 +32,29 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument(
         "--quiet", action="store_true", help="print nothing when the diagnostic is valid"
     )
+    validate.add_argument(
+        "--typedef",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="descriptor whose typedefs the target may use; repeatable, as in service.register",
+    )
     return parser
+
+
+def _typedefs(paths: Sequence[str]) -> dict[str, Any]:
+    """Collect the templates of every `--typedef` source, as `register` does."""
+    from .descriptor import _collect_typedefs, parse_descriptor
+
+    templates: dict[str, Any] = {}
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as handle:
+                templates.update(_collect_typedefs(parse_descriptor(handle.read(), origin=f"<{path}>")))
+        except OSError as exc:
+            print(f"aiset: cannot read {path}: {exc.strerror}", file=sys.stderr)
+            raise SystemExit(2) from exc
+    return templates
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -51,7 +73,11 @@ def _validate_descriptor(args: argparse.Namespace) -> int:
         print(f"aiset: cannot read {args.descriptor}: {exc.strerror}", file=sys.stderr)
         return 2
     try:
-        diagnostic = validate_descriptor(source, mode="strict" if args.strict else "default")
+        diagnostic = validate_descriptor(
+            source,
+            mode="strict" if args.strict else "default",
+            known_templates=_typedefs(args.typedef),
+        )
     except AisetError as exc:  # pragma: no cover - validate_descriptor reports, not raises
         print(f"aiset: {exc.message}", file=sys.stderr)
         return 2

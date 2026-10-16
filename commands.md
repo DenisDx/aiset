@@ -56,6 +56,8 @@ Host routes: `GET /api/demo2/health`, `GET /api/demo2/status`,
 .venv/bin/aiset validate-descriptor examples/descriptor.json5
 .venv/bin/aiset validate-descriptor examples/aiset_descriptor.json5 --strict
 .venv/bin/aiset validate-descriptor examples/descriptor.json5 --format text
+.venv/bin/aiset validate-descriptor demo2/descriptor.json5 --strict \
+  --typedef demo2/conf2/descriptor.json5   # the component descriptor owns the templates
 cat examples/descriptor.json5 | .venv/bin/aiset validate-descriptor -
 ```
 

@@ -225,3 +225,87 @@ Add to section 6:
   presence query is permissioned like any other read and answers with booleans
   only.
 ```
+
+---
+
+## Correction 5: merge precedence is a parameter, and the base wins by default
+
+### Old text
+
+SPEC.md section 10.1, Merge contract:
+
+```text
+- Exactly two inputs: a base and an update. The update has priority.
+- The update may be a partial configuration and may target any node or section
+  of the base.
+- The algorithm is recursive. For each field present in both values:
+  - if both values are objects, merge them recursively by these rules;
+  - otherwise (scalars, arrays, `null`, or a type mismatch) the update replaces
+    the base value; arrays are replaced in full, not element by element.
+  Then fields present only in the update are added, and fields present only in
+  the base are kept unchanged.
+```
+
+SPEC_service.md section 14, Merge API:
+
+```text
+- `base`, `update`: JSON-compatible values (in practice, objects).
+- `merged`: a new value; the inputs are not mutated.
+- The update has priority; recursion and replacement rules are in SPEC_.md
+  10.1.
+```
+
+### Reason for the correction
+
+"the update always replaces the base" made a component document destructive:
+loading one could silently rewrite values the operator had set on purpose in
+the main file, and a partial update could not express "use this only where the
+main file says nothing". The precedence is a policy decision of the host, not a
+property of the merge function, so it belongs in the interface rather than being
+fixed by the library.
+
+### Recommended new text
+
+Replace the SPEC.md 10.1 bullets above with:
+
+```text
+- Exactly two inputs: a base and an update, plus one precedence parameter.
+- The default precedence is `base`: on a conflict the base value survives.
+  Fields present only in the update are added, and fields present only in the
+  base are kept unchanged.
+- The algorithm is recursive in both precedences. For each field present in both
+  values:
+  - if both values are objects, merge them recursively by these rules;
+  - otherwise (scalars, arrays, `null`, or a type mismatch) the winner takes the
+    field: the base with the default precedence, the update with `update`.
+- `prefer: "update"` restores the former rule, where the update replaces the base
+  on every conflict. It is never implicit: a host that wants an override layer
+  asks for it explicitly.
+- An update cannot delete a base field in either precedence.
+- Merge is deterministic and returns a new value; it does not mutate its inputs.
+```
+
+And in SPEC_service.md section 14:
+
+```text
+aiset.merge(base, update, *, prefer="base") -> merged
+
+| prefer | Conflict winner | Meaning |
+|---|---|---|
+| `base` (default) | the base | The update fills gaps and merges objects. |
+| `update` | the update | The former behaviour: an overriding layer. |
+
+`POST {base}/merge` accepts the same `prefer` value in the request body and
+echoes it in the response; an unknown value is a `BAD_REQUEST`.
+`Config.update(other, *, prefer="base")` forwards the parameter unchanged.
+```
+
+Add to SPEC.md 10.2, next to the update rule:
+
+```text
+- **Editing the base with a loaded layer.** A component document never receives a
+  write. Any change made through the service, whatever value the editor was
+  showing, is stored in the base document at its own path and revision. The base
+  keeps owning its own values; the default precedence makes an edit visible
+  immediately, and the next reload of the layer cannot take it back.
+```

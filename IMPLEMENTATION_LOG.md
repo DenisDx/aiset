@@ -320,6 +320,77 @@ generated forms/helpers, AI) are out of scope and reported as explicit
   variable name is typed, it appears only once there is something to check; and
   the green `env VARIABLE` badge is gone, because it repeated the name the field
   next to it already shows.
+- 2026-10-16. Staging a `set` whose `value_text` equals what the snapshot already
+  stores is now a no-op: nothing is staged, the row keeps no dirty badge and the
+  staged list stays empty. Entering the environment mode and leaving it again
+  therefore returns the row to the state it was in. Caught in `stageOperations`,
+  so it also covers the assistant proposing a value that is already stored.
+- 2026-10-16. The "drop the substitution" and "restore the default value" buttons
+  shared one glyph and were confused with each other: they are now `⊘` and `↺`.
+- 2026-10-16. The "drop the substitution" button did the opposite of its name in
+  one of its two situations: after a substitution had been typed and staged, it
+  staged the literal value, that operation was skipped as a no-op, and the
+  substitution stayed pending. It now forgets everything staged for the path
+  first, so the node goes back to what the file holds, in both cases.
+- 2026-10-16. The drop-substitution button now behaves as the user described: it
+  appears only while a variable name is filled, clears the name, hides the name
+  field, gives way to the `.env` button and leaves the row showing the plain
+  value. A node with a staged change also carries its own `↺` revert button, so
+  a single staged operation can be undone where it was made; the default-value
+  button moved to `⌂` to keep the two apart.
+- 2026-10-16. Two follow-up states of the drop button: pressing `.env` after a
+  drop brings the name field back and gives way to the drop button again, and
+  `revert` restores the substitution view together with the clean row. Both
+  fell out of the same cause: the view flags outlived the action that set them.
+  `_dropTemplate` sets `hiddenTemplate` after it reverts, which `revert` clears.
+- 2026-10-16. Component documents in demo2. `demo2/conf2/descriptor.json5`
+  describes the override file and declares the `typedefvalue1` and
+  `typedefvalue2` templates; the main descriptor uses them through
+  `typedef_sources`, so the base section and the update cannot drift apart. The
+  host registers the component as a second document, merges it onto
+  `includes.conf2` (SPEC.md 10.1), and reports every changed path in
+  `/api/demo2/status`; the page gets a document switcher. The base section
+  deliberately contains the overlap cases: replaced scalars, an array replaced
+  as a whole, a flipped flag, a field only in the base that survives, and a
+  nested object where one inner field is replaced while the other is kept.
+- 2026-10-16. Helpers (SPEC.md 18.2): `aiset.registerHelper(tag, factory)` plus
+  `instance.runHelper(node)`. The tree editor renders a form button for a node
+  whose descriptor carries a `helper` binding, and the shipped `node_form`
+  helper opens a modal over the visible children and stages the fragment it
+  builds through the same validate-then-stage path as the raw editor.
+- 2026-10-16. `aiset validate-descriptor` accepts repeatable `--typedef`
+  sources, so a descriptor that uses templates owned by a component descriptor
+  is validated exactly as the host compiles it.
+- 2026-10-16. The type mark was rendered in the wrong place, so it never showed
+  up: a leaf whose value is empty is rare, and a typed control exists otherwise.
+  The column that shows + and - for objects now carries a coloured type mark for
+  every leaf instead: `i` and `n` green, `"` blue, `b` violet, `[`/`{` muted for
+  an empty array or object, `?` for anything else. Red is still not used, and
+  the value column no longer repeats the mark.
+- 2026-10-16. A network-level failure while loading a document now says "the
+  host did not answer. Is demo2 still running?" instead of "Failed to fetch",
+  which named a symptom the user cannot act on. The reported case turned out to
+  be a stopped host: the component document, the typedef wiring and the tree
+  route were all answering once the process was up again.
+- 2026-10-16. Merge precedence became a parameter and the base wins by default
+  (SPEC_.md correction 5). `aiset.merge(base, update, *, prefer="base")` keeps
+  the base on every conflict, merges objects recursively, adds what only the
+  update has and never deletes; `prefer="update"` restores the former rule.
+  `POST /merge` takes and echoes the parameter, `Config.update` forwards it, and
+  demo2 merges its component document with the default, so the main file keeps
+  its values and the component only fills the gaps. Editing the merged section
+  still writes the base document, which the default precedence makes visible.
+  340 tests.
+- 2026-10-16. The expand/collapse buttons of the tree read better: `+` and `-`
+  are bold at 19px (three pixels larger) instead of 16px regular, in the normal
+  text colour instead of the muted one, with a panel background on hover. The
+  library stylesheet carries the same typographic defaults for other hosts.
+- 2026-10-16. The tree editor draws the staged operations, not the snapshot it
+  loaded. A staged value is the value the control shows, a staged entry appears
+  in its array or object, a staged move reorders the visible list, and a staged
+  removal keeps the row with a red `deleted` mark until the change is applied or
+  reverted. The store, the raw editor and every service call still see the file
+  as it is, so the projection is a preview and nothing else.
 - 2026-10-15. M2/M4 work deliberately not started: MCP adapter, hook
   dispatcher, helper micro-forms, history/restore, and a general agent
   framework. Recognized hook bindings are refused at write time with

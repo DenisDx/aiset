@@ -17,7 +17,9 @@ $PY -m pytest -q
 echo "== descriptor diagnostics =="
 .venv/bin/aiset validate-descriptor examples/descriptor.json5 --quiet
 .venv/bin/aiset validate-descriptor examples/aiset_descriptor.json5 --strict --quiet
-.venv/bin/aiset validate-descriptor demo2/descriptor.json5 --strict --quiet
+.venv/bin/aiset validate-descriptor demo2/conf2/descriptor.json5 --strict --quiet
+.venv/bin/aiset validate-descriptor demo2/descriptor.json5 --strict --quiet \
+  --typedef demo2/conf2/descriptor.json5
 
 echo "== tracked examples are unmodified =="
 $PY - <<'PYCODE'

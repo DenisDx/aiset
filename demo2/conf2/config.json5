@@ -1,0 +1,27 @@
+//this is an override config for the section conf2 from the main config.json5
+{
+    value1: "override",
+    value2: [1,2,3],
+    value3: true,
+    value4: "new value",
+    typedefvalue1: {
+        subValue1: "sub override",
+        subValue2: 42,
+        subValue3: false,
+        subValue4: {
+            innerSubValue1: "inner value"
+        },
+        subValue5: ["yet another sub value","additional sub value"]
+
+    },
+    typedefvalue2: {
+        subValue1: "sub override 2",
+        subValue2: 44,
+        subValue3: false,
+        subValue4: {
+            innerSubValue1: "inner value 2"
+        },
+        subValue5: ["yet another sub value 2","additional sub value 2"]
+
+    }
+}

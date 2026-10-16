@@ -30,7 +30,9 @@ every document and what it is responsible for, per the agent workflow in
 | [demo2/app.py](demo2/app.py) | demo2 host backend: settings, resolver, lifecycle routes, chat route. |
 | [demo2/agent.py](demo2/agent.py) | demo2 configuration assistant: OpenAI-compatible transport and the bounded read/stage tool loop. |
 | [demo2/env.py](demo2/env.py) | `.env` reader used as resolver data. |
-| [demo2/descriptor.json5](demo2/descriptor.json5) | demo2 descriptor covering every required shape. |
+| [demo2/descriptor.json5](demo2/descriptor.json5) | demo2 descriptor covering every required shape, including the `includes` section whose elements are typed from the component descriptor. |
+| [demo2/conf2/descriptor.json5](demo2/conf2/descriptor.json5) | Descriptor of the component override document; declares the `typedefvalue1` and `typedefvalue2` templates that the main descriptor uses through `typedef_sources`. |
+| [demo2/conf2/config.json5](demo2/conf2/config.json5) | The override update merged onto `includes.conf2` (SPEC.md 10.1); a test fixture of the host. |
 | [demo2/config.json5.example](demo2/config.json5.example) | demo2 configuration template; seeded into the ignored local `config.json5`. |
 | [demo2/.env.example](demo2/.env.example) | demo2 environment template, including the AI model name; seeded into the ignored local `.env`. |
 | [demo2/frontend/](demo2/frontend/) | demo2 page, host script, and AIDIR-like stylesheet. |

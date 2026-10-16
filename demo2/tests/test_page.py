@@ -178,9 +178,10 @@ def test_stylesheet_themes_every_value_control():
 def test_descriptor_declares_visible_placeholders():
     """A placeholder is only useful where the stored value is empty or absent."""
     descriptor = (DEMO2 / "descriptor.json5").read_text(encoding="utf-8")
+    component = (DEMO2 / "conf2" / "descriptor.json5").read_text(encoding="utf-8")
     from aiset.descriptor import compile_descriptor
 
-    compiled = compile_descriptor(descriptor)
+    compiled = compile_descriptor(descriptor, typedef_sources=[component])
     placeholders = {
         "/server/host": "0.0.0.0",
         "/fixtures/scalars/empty_text": "an empty string is stored here; type to replace it",

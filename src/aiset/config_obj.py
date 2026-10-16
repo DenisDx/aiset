@@ -192,10 +192,14 @@ class Config:
             config.data = place_mount(value, mount, value)
         return config
 
-    def update(self, other: "Config | dict[str, Any]") -> "Config":
-        """Merge another Config or mapping onto this one; the base is unchanged."""
+    def update(self, other: "Config | dict[str, Any]", *, prefer: str = "base") -> "Config":
+        """Merge another Config or mapping onto this one; the base is unchanged.
+
+        `prefer` follows `aiset.merge`: the default keeps this Config on every
+        conflict, `"update"` restores the historical override semantics.
+        """
         update = other.data if isinstance(other, Config) else other
-        merged = merge(self.data, update)
+        merged = merge(self.data, update, prefer=prefer)
         origin = Origin(
             file=f"{self.origin.file}+update",
             loaded_at=datetime.now(timezone.utc).isoformat(),

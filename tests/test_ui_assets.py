@@ -70,6 +70,12 @@ const TREE = {
       field: { type: "object", description: "server" },
       capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
       children: [{
+        path: "/server/enabled", type: "bool", exists: true, access_denied: false, kind: "leaf",
+        origin: { kind: "file" }, apply: "live", value_text: "true",
+        field: { type: "bool", description: "switch" },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+        children: [], items: [],
+      }, {
         path: "/server/level", type: "string", exists: true, access_denied: false, kind: "leaf",
         origin: { kind: "file" }, apply: "reload", value_text: '"debug"',
         comments: ["Backend log level", "Read by the host on reload."],
@@ -77,6 +83,21 @@ const TREE = {
                  enum: ["debug", "info", "error"] },
         capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
         children: [], items: [],
+      }, {
+        path: "/server/typed", type: "object", exists: true, access_denied: false, kind: "object",
+        origin: { kind: "file" }, apply: "reload", value_text: "{\n  a: 1\n}",
+        field: { type: "object", description: "typed element",
+                 helper: { tag: "node_form", actions: ["create", "edit"], presentation: "modal",
+                           settings: { note: "subform" } } },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+        children: [{
+          path: "/server/typed/a", type: "int", exists: true, access_denied: false, kind: "leaf",
+          origin: { kind: "file" }, apply: "reload", value_text: "1",
+          field: { type: "int", description: "a" },
+          capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+          children: [], items: [],
+        }],
+        items: [],
       }, {
         path: "/server/env_port", type: "int", exists: true, access_denied: false, kind: "leaf",
         origin: { kind: "file" }, apply: "restart", value_text: "${SERVER_PORT:-8383}",
@@ -260,7 +281,7 @@ assert(levelName.title.indexOf("apply: reload") >= 0, "the tooltip shows the app
 const levelActions = levelRow.children.find((child) => child.className === "aiset-tree-actions");
 const restore = levelActions.children.find((child) => child.title && child.title.indexOf("Restore the default") >= 0);
 assert(restore, "a node with a default offers the default button");
-assert(restore.children[0].tagName === "span" && restore.children[0].textContent === "\u21ba",
+assert(restore.children[0].tagName === "span" && restore.children[0].textContent === "\u2302",
        "the default button carries a text caption, so the font rules reach it");
 restore.events.click();
 const staged = first.getPendingOperations();
@@ -296,6 +317,71 @@ nameInput.events.change();
 assert(first.getPendingOperations().slice(-1)[0].value_text === "9000",
        "an empty variable name stores the inline value and drops the substitution");
 first.revert("/server/env_port");
+first.expandAll();
+
+/* dropping hides the name field, and the row reads as the plain value again */
+first.hiddenTemplate = {};
+first.expandAll();
+const dropRow = first._renderNode(first._find("/server/env_port"), false).children[0].children;
+dropRow.find((child) => child.className.indexOf("aiset-tree-value") === 0).children
+  .find((child) => child.className.indexOf("env-off") >= 0).events.click();
+const afterDrop = first._renderNode(first._find("/server/env_port"), false).children[0].children;
+const afterValue = afterDrop.find((child) => child.className.indexOf("aiset-tree-value") === 0);
+assert(!afterValue.children.some((child) => child.className === "aiset-tree-env"),
+       "the name field is gone after dropping");
+assert(afterValue.children[0].value === "8383", "the row shows the inline value");
+const afterActions = afterDrop.find((child) => child.className === "aiset-tree-actions").children;
+assert(afterActions.some((child) => child.children[0] && child.children[0].textContent === ".env"),
+       "and the .env button is back in place of the drop button");
+assert(!afterActions.some((child) => child.children[0] && child.children[0].textContent === "\u2298"),
+       "the drop button gave way to it");
+/* coming back with .env restores the name field and the drop button */
+const backWithEnv = afterActions.find((child) => child.children[0] && child.children[0].textContent === ".env");
+backWithEnv.events.click();
+const restored = first._renderNode(first._find("/server/env_port"), false).children[0].children;
+const restoredValue = restored.find((child) => child.className.indexOf("aiset-tree-value") === 0).children;
+const restoredName = restoredValue.find((child) => child.className === "aiset-tree-env");
+assert(restoredName, "the name field is back");
+assert(restoredName.value === "SERVER_PORT", "filled with the variable the file holds");
+assert(restoredValue.some((child) => child.className.indexOf("env-off") >= 0),
+       "the drop button is back as well");
+const restoredActions = restored.find((child) => child.className === "aiset-tree-actions").children;
+assert(!restoredActions.some((child) => child.children[0] && child.children[0].textContent === ".env"),
+       "and the .env button gave way to it");
+delete first.envDraft["/server/env_port"];
+
+/* revert restores the substitution view together with the clean row */
+first.hiddenTemplate["/server/env_port"] = true;
+first._render();
+const revertBack = first._structuralControls(first._find("/server/env_port")).children
+  .find((child) => child.className.indexOf("revert") >= 0);
+assert(revertBack, "the dropped node is staged, so it offers a revert");
+revertBack.events.click();
+const afterRevert = first._renderNode(first._find("/server/env_port"), false).children[0].children;
+const afterRevertValue = afterRevert.find((child) => child.className.indexOf("aiset-tree-value") === 0).children;
+assert(afterRevertValue.some((child) => child.className === "aiset-tree-env"),
+       "revert brings the name field back");
+assert(afterRevertValue.some((child) => child.className.indexOf("env-off") >= 0),
+       "and the drop button with it");
+assert(first._pendingFor("/server/env_port") === false, "the row is clean again");
+first.revert("/server/env_port");
+first.hiddenTemplate = {};
+first.expandAll();
+
+/* a dirty node carries its own revert, and it shares no glyph with the default */
+first.stageOperations([{ op: "set", path: "/server/port", value_text: "8385" }], "user");
+const dirtyActions = first._structuralControls(first._find("/server/port")).children;
+const revertButton = dirtyActions.find((child) => child.className.indexOf("revert") >= 0);
+assert(revertButton, "a staged node offers a revert of its own");
+assert(revertButton.children[0].textContent === "\u21ba", "revert keeps the circular arrow");
+const defaultButton = dirtyActions.find((child) => child.className.indexOf("default") >= 0);
+assert(defaultButton && defaultButton.children[0].textContent === "\u2302",
+       "the default value uses another sign");
+revertButton.events.click();
+assert(first._pendingFor("/server/port") === false, "revert drops the staged operation");
+assert(!first._structuralControls(first._find("/server/port")).children
+  .some((child) => child.className.indexOf("revert") >= 0), "and the button goes away with it");
+first.stageOperations([{ op: "set", path: "/server/port", value_text: "8384" }], "ai");
 first.expandAll();
 
 /* the .env control is a button on a plain value, and never on a substituted one */
@@ -418,16 +504,117 @@ const locked = find(first.treeNode, (node) => node.disabled === true && node.val
 assert(locked, "a stored null cannot be edited as text");
 first.expandAll();
 
-/* an empty read-only leaf shows its type instead of an empty control */
-const glyph = find(first.treeNode, (node) => node.className && node.className.indexOf("aiset-tree-type") === 0);
-assert(glyph, "a leaf with nothing to show must name its type");
-assert(glyph.className.indexOf("int") >= 0, "the type mark carries the type for styling");
-assert(glyph.title.indexOf("not stored yet") >= 0, "the type mark explains itself on hover");
+/* every leaf carries a coloured type mark in the column where objects show + */
+const leafRow = first._renderNode(first._find("/server/level"), false).children[0];
+const leafToggle = leafRow.children[0];
+assert(leafToggle.className.indexOf("aiset-tree-toggle-type") >= 0,
+       "a leaf has no +/-, so the same box carries the type");
+const glyph = leafToggle.children[0];
+assert(glyph.className.indexOf("aiset-tree-type") === 0, "the mark is the type glyph");
+assert(glyph.className.indexOf("string") >= 0, "the mark carries the type for styling");
+assert(glyph.title.indexOf("string") >= 0, "and explains itself on hover");
+
+const intToggle = first._renderNode(first._find("/server/port"), false).children[0].children[0];
+assert(intToggle.children[0].textContent === "i" && intToggle.children[0].className.indexOf("int") >= 0,
+       "an integer is marked with a green i");
+
+const boolToggle = first._renderNode(first._find("/server/enabled"), false).children[0].children[0];
+assert(boolToggle.children[0].textContent === "b" && boolToggle.children[0].className.indexOf("bool") >= 0,
+       "a boolean is marked with a violet b");
+
+const objectToggle = first._renderNode(first._find("/server"), false).children[0].children[0];
+assert(objectToggle.tagName === "button" && (objectToggle.textContent === "+" || objectToggle.textContent === "-"),
+       "an object still opens with + and -");
+assert(!objectToggle.children.length, "and carries no type mark");
 first.setShowAbsent(false);
 
-return first.applyPending();
+/* a helper binding opens a modal form; its result stages like any other edit */
+const typedActions = first._structuralControls(first._find("/server/typed")).children;
+const formButton = typedActions.find((child) => child.className.indexOf("form") >= 0);
+assert(formButton, "a node with a helper binding offers the form button");
+assert(formButton.disabled === false, "the shipped helper is registered, so it works");
+assert(formButton.title.indexOf("node_form") >= 0, "the button names the helper it runs");
+
+const typedNode = first._find("/server/typed");
+first.expanded["/server/typed"] = true;
+global.document.body = global.document.body || { children: [], appendChild(node) { this.children.push(node); } };
+const submitted = first.runHelper(typedNode);
+const dialog = global.document.body.children[0];
+assert(dialog.className === "aiset-form", "the helper opens a dialog");
+assert(dialog.children.some((child) => child.className === "aiset-form-title"), "with a title");
+assert(dialog.children.some((child) => child.className === "aiset-form-actions"), "with actions");
+const formRow = dialog.children.find((child) => child.className === "aiset-form-row");
+assert(formRow.dataset.staged === "1", "the row carries the stored value");
+formRow.dataset.staged = "7";
+dialog.children.find((child) => child.className === "aiset-form-actions").children[1].events.click();
+
+return submitted.then(() => {
+  const staged = first.getPendingOperations().filter((item) => item.path === "/server/typed");
+  assert(staged.length === 1 && staged[0].value_text === "{\n  a: 7\n}\n",
+         "the form stages the fragment it built");
+  first.revert("/server/typed");
+  assert(first._pendingFor("/server/typed") === false, "and that result is undoable too");
+  return first.applyPending();
+});
 }).then(() => {
-  const apply = calls.filter((call) => call.url.indexOf("/operations") >= 0);
+  /* The staged view: the store keeps its own snapshot, the user must see the
+   * operations that are already staged (SPEC_service.md 13). */
+  const nodeAt = (node, path) => {
+    if (node.path === path) { return node; }
+    for (const child of (node.children || []).concat(node.items || [])) {
+      const found = nodeAt(child, path);
+      if (found) { return found; }
+    }
+    return null;
+  };
+  const view = () => first._viewTree().node;
+  const hosts = () => nodeAt(view(), "/server/hosts");
+
+  first.stageOperations([
+    { op: "set", path: "/server/port", value_text: "8384" },
+    { op: "remove", path: "/server/hosts/0" },
+    { op: "add", path: "/server/hosts/-", value_text: '"10.0.0.1"' },
+    { op: "add", path: "/server/newprop", value_text: "5" },
+    { op: "move", from: "/server/hosts/0", path: "/server/hosts/1" },
+  ], "user");
+
+  assert(nodeAt(view(), "/server/port").value_text === "8384",
+         "a staged value is the value the editor shows");
+  assert(first._find("/server/port").value_text === "8383",
+         "the snapshot itself is never touched by staging");
+
+  const removed = nodeAt(view(), "/server/hosts/0");
+  assert(removed && removed.pending_delete === true,
+         "a staged removal stays in the tree and is marked as deleted");
+  first.expandAll();
+  const deletedRow = find(first.treeNode, (node) => node.dataset && node.dataset.deleted === "true");
+  assert(deletedRow, "the deleted mark reaches the row");
+  assert(deletedRow.className.indexOf("is-deleted") >= 0, "and the row is styled as deleted");
+
+  const appended = hosts().items.find((item) => item.path === "/server/hosts/-");
+  assert(appended, "a staged entry shows up in the tree");
+  assert(appended.path === "/server/hosts/-", "and keeps the path the service expects");
+  assert(appended.value_text === '"10.0.0.1"', "and shows the value that will be written");
+  assert(appended.label === "1", "and is labelled with the index it will get");
+  assert(hosts().items.map((item) => item.value_text).join(",") === '"10.0.0.1","127.0.0.1"',
+         "a staged move reorders what the user sees");
+
+  const property = nodeAt(view(), "/server/newprop");
+  assert(property && property.staged === true, "a staged property of an object appears as well");
+  assert(property.value_text === "5", "with the staged value");
+
+  /* the raw editor always shows the stored source, not the staged fragment */
+  assert(first._rawEditor(first._find("/server/port")).children[1].value === "8383",
+         "raw editing starts from the file, never from a pending change");
+  const stagedPaths = first.getPendingOperations().map((item) => item.path);
+  stagedPaths.forEach((path) => first.revert(path));
+  assert(first.getPendingOperations().length === 0,
+         "reverting every staged path clears the view again, whatever the operation");
+  assert(hosts().items.length === 1, "and the tree is the snapshot again");
+})
+.then(() => {
+  /* earlier blocks validate other fragments, so the commit is the last pair */
+  const apply = calls.filter((call) => call.url.indexOf("/operations") >= 0).slice(-2);
   assert(apply.length === 2, "apply performs validate and commit requests");
   assert(apply[0].method === "POST", "operations are POST requests");
   assert(apply[0].url.indexOf("/operations/validate") >= 0, "validation happens before the commit");

@@ -19,14 +19,33 @@ ROOT = Path(__file__).resolve().parents[1]
 # -- merge -----------------------------------------------------------------
 
 
+def test_merge_keeps_the_base_on_a_conflict_by_default():
+    """SPEC_.md correction 5: the base decides, objects still merge."""
+    assert merge({"a": 1}, {"a": 2}) == {"a": 1}
+    assert merge({"a": [1, 2]}, {"a": [3]}) == {"a": [1, 2]}
+    assert merge({"a": None}, {"a": 1}) == {"a": None}
+    assert merge({"a": 1}, {"a": {"b": 2}}) == {"a": 1}
+    assert merge({"a": {"b": 1}}, {"a": 5}) == {"a": {"b": 1}}
+    assert merge({"a": "base"}, {"a": None}) == {"a": "base"}
+
+
 def test_merge_objects_recursively():
-    assert merge({"a": {"b": 1, "c": 2}}, {"a": {"c": 3}}) == {"a": {"b": 1, "c": 3}}
+    assert merge({"a": {"b": 1, "c": 2}}, {"a": {"c": 3}}) == {"a": {"b": 1, "c": 2}}
+    assert merge({"a": {"b": 1}}, {"a": {"c": 2}}) == {"a": {"b": 1, "c": 2}}
 
 
-def test_merge_replaces_arrays_and_scalars():
-    assert merge({"a": [1, 2]}, {"a": [3]}) == {"a": [3]}
-    assert merge({"a": {"b": 1}}, {"a": 5}) == {"a": 5}
-    assert merge({"a": 1}, {"a": None}) == {"a": None}
+def test_update_priority_is_the_former_behaviour():
+    """The old rule stays available through the extra parameter."""
+    assert merge({"a": 1}, {"a": 2}, prefer="update") == {"a": 2}
+    assert merge({"a": [1, 2]}, {"a": [3]}, prefer="update") == {"a": [3]}
+    assert merge({"a": {"b": 1}}, {"a": 5}, prefer="update") == {"a": 5}
+    assert merge({"a": 1}, {"a": None}, prefer="update") == {"a": None}
+    assert merge({"a": {"b": 1, "c": 2}}, {"a": {"c": 3}}, prefer="update") == {"a": {"b": 1, "c": 3}}
+
+
+def test_merge_rejects_an_unknown_preference():
+    with pytest.raises(ValueError):
+        merge({}, {}, prefer="whatever")
 
 
 def test_merge_keeps_base_only_and_adds_update_only():
@@ -45,7 +64,16 @@ def test_merge_does_not_mutate_inputs():
 
 
 def test_merge_chains_over_one_base():
-    assert merge(merge({"a": 1}, {"a": 2}), {"a": 3}) == {"a": 3}
+    assert merge(merge({"a": 1}, {"a": 2}, prefer="update"), {"a": 3}, prefer="update") == {"a": 3}
+    assert merge(merge({"a": 1}, {"a": 2}), {"a": 3}) == {"a": 1}
+
+
+def test_merge_returns_a_new_value_in_both_modes():
+    base = {"a": {"b": 1}}
+    update = {"a": {"b": 2, "c": 3}}
+    assert merge(base, update) == {"a": {"b": 1, "c": 3}}
+    assert merge(base, update, prefer="update") == {"a": {"b": 2, "c": 3}}
+    assert base == {"a": {"b": 1}} and update == {"a": {"b": 2, "c": 3}}
 
 
 # -- Config object and mount grammar ---------------------------------------
@@ -87,8 +115,14 @@ def test_config_load_and_update(tmp_path):
     config = Config.load(path)
     assert config.data["version"] == "1.0"
     assert isinstance(config.origin, Origin)
-    updated = config.update({"log_level": "critical"})
-    assert updated.data["log_level"] == "critical"
+    # The default keeps the base on a conflict; the update fills what is missing.
+    updated = config.update({"log_level": "critical", "extra": 1})
+    assert updated.data["log_level"] == "info", "the base wins by default"
+    assert updated.data["extra"] == 1, "a field only in the update is taken"
+    assert config.data["log_level"] == "info"
+
+    overriding = config.update({"log_level": "critical"}, prefer="update")
+    assert overriding.data["log_level"] == "critical", "the old rule stays available"
     assert config.data["log_level"] == "info"
 
 

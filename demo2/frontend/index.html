@@ -27,6 +27,10 @@
       <div class="pane-head">
         <h2>Configuration</h2>
         <div class="pane-tools">
+          <label class="pane-toggle" title="Which registered document the editor shows">
+            document
+            <select id="document-select" aria-label="Document"></select>
+          </label>
           <label class="pane-toggle" title="Show the stored text of objects and arrays">
             <input type="checkbox" id="tree-values-text"> values as text
           </label>
@@ -36,7 +40,10 @@
           <span class="pane-note">Edits are staged until Apply</span>
         </div>
       </div>
-      <div class="pane-body" id="settings-tree"></div>
+      <div class="pane-body">
+        <div class="override-note" id="override-note"></div>
+        <div id="settings-tree"></div>
+      </div>
     </section>
 
     <section class="pane pane-chat" aria-label="Configuration assistant">

@@ -144,6 +144,7 @@
             " · reloads " + status.reloads +
             " · last change: " + ((status.applied && status.applied.state) || "none");
         }
+        reportOverride(status.override);
         var model = document.getElementById("chat-model");
         if (model) {
           model.textContent = status.ai && status.ai.enabled
@@ -175,6 +176,65 @@
     { id: "tree-show-absent", read: "getShowAbsent", write: "setShowAbsent" }
   ];
 
+  /* The host registers several documents: the override component and the main
+     one. Switching remounts the editor for the chosen document. */
+  function bindDocuments(editor) {
+    var select = document.getElementById("document-select");
+    if (!select) { return; }
+    fetch(HOST_BASE + "/status", { headers: { Accept: "application/json" } })
+      .then(function (response) { return response.json(); })
+      .then(function (status) {
+        var documents = status.documents || [editor.document];
+        if (!documents.length) { return; }
+        select.innerHTML = "";
+        documents.forEach(function (id) {
+          var option = document.createElement("option");
+          option.value = id;
+          option.textContent = id;
+          select.appendChild(option);
+        });
+        select.value = editor.document;
+        select.addEventListener("change", function () { mountDocument(select.value); });
+        reportOverride(status.override);
+      })
+      .catch(function () { /* the editor works without the switcher */ });
+  }
+
+  function mountDocument(id) {
+    if (!tree || !id || id === tree.document) { return; }
+    tree.destroy();
+    var host = document.getElementById("settings-tree");
+    tree = window.aiset.mountTree(host, { document: id, apiBase: "/api/settings", lifecycle: lifecycleActions() });
+    bindTreeOptions(tree);
+    tree.on("loaded", refreshStatus);
+    tree.on("applied", refreshStatus);
+  }
+
+  function lifecycleActions() {
+    return [{ id: "restart", label: "Restart",
+      url: HOST_BASE + "/restart",
+      confirm: "Restart demo2? The server will re-exec itself; staged edits stay in the browser.",
+      reloadAfter: false }];
+  }
+
+  /* What the component document changed in the main one. */
+  function reportOverride(override) {
+    var note = document.getElementById("override-note");
+    if (!note) { return; }
+    if (!override || !override.ok) {
+      note.textContent = override && override.reason ? "override: " + override.reason : "";
+      return;
+    }
+    var taken = override.changed || [];
+    var refused = (override.from_update || []).length - taken.length;
+    note.textContent = (taken.length
+      ? override.document + " -> " + override.mount + ": " + taken.length + " path(s) taken, e.g. "
+        + taken.slice(0, 3).join(", ")
+      : override.document + " -> " + override.mount + ": nothing taken")
+      + (refused > 0 ? "; " + refused + " path(s) keep the base value" : "")
+      + " (merge prefers the base)";
+  }
+
   function bindTreeOptions(editor) {
     VIEW_OPTIONS.forEach(function (option) {
       var toggle = document.getElementById(option.id);
@@ -197,15 +257,10 @@
       document: "demo2",
       apiBase: "/api/settings",
       /* Reload is aiset's explicit re-read path; Restart is a host route. */
-      lifecycle: [{
-        id: "restart",
-        label: "Restart",
-        url: HOST_BASE + "/restart",
-        confirm: "Restart demo2? The server will re-exec itself; staged edits stay in the browser.",
-        reloadAfter: false
-      }]
+      lifecycle: lifecycleActions()
     });
     bindTreeOptions(tree);
+    bindDocuments(tree);
     tree.on("lifecycle", function (event) {
       if (event.action === "restart") { waitForRestart(); }
     });
