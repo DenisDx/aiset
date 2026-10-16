@@ -391,6 +391,19 @@ generated forms/helpers, AI) are out of scope and reported as explicit
   removal keeps the row with a red `deleted` mark until the change is applied or
   reverted. The store, the raw editor and every service call still see the file
   as it is, so the projection is a preview and nothing else.
+- 2026-10-16. A node is dirty exactly when it carries a staged operation that
+  the file does not already describe; the flag itself is never stored. A value
+  that comes back to what the file holds therefore drops its staged operation,
+  so a checkbox toggled twice ends clean instead of stuck, and the same holds
+  for every other control. Editing a value also cancels a staged removal of
+  that node, so the batch can still apply.
+- 2026-10-16. Values behind a `${VAR}` substitution compare by their variable
+  and their default, never by spelling: the quotes belong to the JSON5 literal
+  around the substitution, and `${VAR}` says what `${VAR:-}` says. A substitution
+  is now also written in the form the file uses — a string field keeps its
+  quotes, a field the descriptor converts stays a bare token — so changing a
+  default and returning it clears dirty, an enum behind a placeholder clears too,
+  and applying a change no longer drifts the source form of the file.
 - 2026-10-15. M2/M4 work deliberately not started: MCP adapter, hook
   dispatcher, helper micro-forms, history/restore, and a general agent
   framework. Recognized hook bindings are refused at write time with

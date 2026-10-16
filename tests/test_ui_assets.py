@@ -106,6 +106,37 @@ const TREE = {
         capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
         children: [], items: [],
       }, {
+        /* A string placeholder is quoted in the file, a converted one is not,
+         * and one without a default writes ${VAR}. */
+        path: "/server/env_quoted", type: "string", exists: true, access_denied: false, kind: "leaf",
+        origin: { kind: "file" }, apply: "restart", value_text: '"${SERVER_MODE:-safe}"',
+        template: { name: "SERVER_MODE", default: "safe" },
+        field: { type: "string", description: "quoted placeholder", env: { allowed: true } },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+        children: [], items: [],
+      }, {
+        path: "/server/env_enum", type: "string", exists: true, access_denied: false, kind: "leaf",
+        origin: { kind: "file" }, apply: "reload", value_text: '"${SERVER_LEVEL:-info}"',
+        template: { name: "SERVER_LEVEL", default: "info" },
+        field: { type: "string", description: "enum behind a placeholder",
+                 enum: ["info", "debug", "error"], env: { allowed: true } },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+        children: [], items: [],
+      }, {
+        path: "/server/env_nodefault", type: "string", exists: true, access_denied: false, kind: "leaf",
+        origin: { kind: "file" }, apply: "restart", value_text: '"${SERVER_BASE}"',
+        template: { name: "SERVER_BASE" },
+        field: { type: "string", description: "placeholder without a default", env: { allowed: true } },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+        children: [], items: [],
+      }, {
+        path: "/server/env_bare", type: "int", exists: true, access_denied: false, kind: "leaf",
+        origin: { kind: "file" }, apply: "restart", value_text: "${SERVER_SIZE:-10}",
+        template: { name: "SERVER_SIZE", default: "10" },
+        field: { type: "int", description: "converted placeholder", env: { allowed: true, convert: "int" } },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+        children: [], items: [],
+      }, {
         path: "/server/plain_int", type: "int", exists: true, access_denied: false, kind: "leaf",
         origin: { kind: "file" }, apply: "restart", value_text: "42",
         field: { type: "int", description: "plain" },
@@ -582,6 +613,8 @@ return submitted.then(() => {
          "a staged value is the value the editor shows");
   assert(first._find("/server/port").value_text === "8383",
          "the snapshot itself is never touched by staging");
+  assert(nodeAt(view(), "/server/port").staged === undefined,
+         "an edited value is not a new entry, so it carries no new mark");
 
   const removed = nodeAt(view(), "/server/hosts/0");
   assert(removed && removed.pending_delete === true,
@@ -602,10 +635,86 @@ return submitted.then(() => {
   const property = nodeAt(view(), "/server/newprop");
   assert(property && property.staged === true, "a staged property of an object appears as well");
   assert(property.value_text === "5", "with the staged value");
+  const newRow = find(first.treeNode, (node) => node.dataset && node.dataset.path === "/server/newprop");
+  const dirtyRow = find(first.treeNode, (node) => node.dataset && node.dataset.path === "/server/port");
+  assert(newRow && newRow.dataset.staged === "true", "a staged addition is marked as new");
+  assert(dirtyRow && dirtyRow.dataset.staged === "false",
+         "an edited row is only dirty, never marked as a new entry");
 
   /* the raw editor always shows the stored source, not the staged fragment */
   assert(first._rawEditor(first._find("/server/port")).children[1].value === "8383",
          "raw editing starts from the file, never from a pending change");
+  /* A node is dirty while its staged value differs from the file, and nothing
+   * more: toggling a value back to what the file says cleans it again. */
+  first.revert("/server/enabled");
+  first.stageOperations([{ op: "set", path: "/server/enabled", value_text: "false" }], "user");
+  assert(first._pendingFor("/server/enabled") === true, "a changed checkbox is dirty");
+  assert(nodeAt(view(), "/server/enabled").value_text === "false", "and shows the new value");
+  first.stageOperations([{ op: "set", path: "/server/enabled", value_text: "true" }], "user");
+  assert(first._pendingFor("/server/enabled") === false,
+         "toggling a checkbox back clears dirty instead of doing nothing");
+  assert(first.getPendingOperations().filter((item) => item.path === "/server/enabled").length === 0,
+         "and leaves no staged operation behind");
+  assert(nodeAt(view(), "/server/enabled").value_text === "true", "the stored value is back");
+
+  /* A substitution is compared by its variable and its default, never by its
+   * spelling: the quotes belong to the JSON5 literal around it, and ${VAR}
+   * says what ${VAR:-} says. */
+  const quoted = "/server/env_quoted";
+  const stagedFor = (path) => first.getPendingOperations().filter((item) => item.path === path)[0];
+  first._stageTemplate(first._find(quoted), "SERVER_MODE", "fast");
+  assert(stagedFor(quoted).value_text === '"${SERVER_MODE:-fast}"',
+         "a string placeholder keeps its quotes, as the file writes it");
+  assert(first._pendingFor(quoted) === true, "a changed default is dirty");
+  first._stageTemplate(first._find(quoted), "SERVER_MODE", "safe");
+  assert(first._pendingFor(quoted) === false, "and clean again when the default returns");
+
+  first._stageTemplate(first._find(quoted), "OTHER_MODE", "safe");
+  assert(first._pendingFor(quoted) === true, "another variable is a different value");
+  first.revert(quoted);
+
+  first._stageTemplate(first._find("/server/env_nodefault"), "SERVER_BASE", "");
+  assert(first._pendingFor("/server/env_nodefault") === false,
+         "${VAR} and ${VAR:-} are the same value");
+
+  first._stageTemplate(first._find("/server/env_bare"), "SERVER_SIZE", "20");
+  assert(stagedFor("/server/env_bare").value_text === "${SERVER_SIZE:-20}",
+         "a converted field keeps the bare token the file uses");
+  first._stageTemplate(first._find("/server/env_bare"), "SERVER_SIZE", "10");
+  assert(first._pendingFor("/server/env_bare") === false, "and turns clean when the default returns");
+
+  /* An enum behind a placeholder changes the default, not the literal. */
+  const levelRow = first._renderNode(first._find("/server/env_enum"), false);
+  const levelSelect = (function find(node) {
+    if (String(node.tagName).toUpperCase() === "SELECT") return node;
+    for (const child of node.children || []) { const found = find(child); if (found) return found; }
+    return null;
+  })(levelRow);
+  levelSelect.value = JSON.stringify("debug"); levelSelect.events.change();
+  assert(stagedFor("/server/env_enum").value_text === '"${SERVER_LEVEL:-debug}"',
+         "the enum writes the new default inside the substitution");
+  assert(first._pendingFor("/server/env_enum") === true, "and the row is dirty");
+  const levelBack = (function find(node) {
+    if (String(node.tagName).toUpperCase() === "SELECT") return node;
+    for (const child of node.children || []) { const found = find(child); if (found) return found; }
+    return null;
+  })(first._renderNode(first._find("/server/env_enum"), false));
+  levelBack.value = JSON.stringify("info"); levelBack.events.change();
+  assert(first._pendingFor("/server/env_enum") === false,
+         "choosing the stored level again clears dirty");
+  assert(stagedFor("/server/env_enum") === undefined, "and leaves nothing staged for it");
+
+  first.stageOperations([{ op: "set", path: "/server/port", value_text: "8385" }], "user");
+  first.stageOperations([{ op: "set", path: "/server/port", value_text: "8383" }], "user");
+  assert(first._pendingFor("/server/port") === false, "the same rule holds for a typed value");
+
+  /* Editing a value cancels a staged removal of the same node. */
+  first.stageOperations([{ op: "remove", path: "/server/hosts/0" }], "user");
+  first.stageOperations([{ op: "set", path: "/server/hosts/0", value_text: '"10.0.0.2"' }], "user");
+  assert(first.getPendingOperations().some((item) => item.op === "remove" &&
+         item.path === "/server/hosts/0") === false,
+         "a node being edited is not also being deleted");
+
   const stagedPaths = first.getPendingOperations().map((item) => item.path);
   stagedPaths.forEach((path) => first.revert(path));
   assert(first.getPendingOperations().length === 0,

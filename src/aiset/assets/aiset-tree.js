@@ -312,17 +312,61 @@
    * operation, must not mark the row dirty, and must leave the staged list
    * empty. Entering the environment mode and leaving it again untouched is the
    * common case. */
-  TreeEditor.prototype._isNoop = function (operation) {
+  /* Whether a value says what the file already says. */
+  TreeEditor.prototype._matchesStore = function (operation) {
     if (!operation || operation.op !== "set") { return false; }
     var node = this._find(operation.path || "");
     if (!node || node.exists === false) { return false; }
-    return node.value_text === operation.value_text;
+    return this._sameValue(node, operation.value_text);
+  };
+
+  /* What the file holds and what a control proposes are written on two
+   * different layers: the quotes belong to the JSON5 literal around a
+   * substitution, and "${VAR}" says exactly what "${VAR:-}" says. So a value
+   * behind a substitution is compared by its variable and its default, and
+   * everything else is compared without the quotes. */
+  TreeEditor.prototype._sameValue = function (node, text) {
+    var storedText = this._valueText(node);
+    var stagedText = text === null || text === undefined ? "" : String(text);
+    if (storedText === stagedText) { return true; }
+    var stored = this._templateInfo(node);
+    var staged = this._templateInfo({ value_text: stagedText });
+    if (stored && staged) {
+      var storedDefault = stored.fallback === null || stored.fallback === undefined ? "" : stored.fallback;
+      var stagedDefault = staged.fallback === null || staged.fallback === undefined ? "" : staged.fallback;
+      return stored.name === staged.name && storedDefault === stagedDefault;
+    }
+    return unquote(String(storedText)) === unquote(stagedText);
+  };
+
+  /* Nothing about "dirty" is stored per node. A node is dirty exactly when it
+   * carries a staged operation that the file does not already describe, so a
+   * value that comes back to what the file holds takes its operation with it
+   * and the node turns clean again — the same rule for every control, and the
+   * reason toggling a checkbox twice ends where it started. */
+  TreeEditor.prototype._reconcile = function (operation) {
+    var path = operation.path || operation.from || "";
+    if (operation.op === "set") {
+      /* Editing a value means the node stays, so a staged removal of the same
+       * node is dropped instead of leaving a batch that could not apply. */
+      this.pending = this.pending.filter(function (item) {
+        return !(item.operation.op === "remove" && item.operation.path === path);
+      });
+      if (this._matchesStore(operation)) {
+        this.pending = this.pending.filter(function (item) {
+          return !(item.operation.op === "set" && item.operation.path === path);
+        });
+        return false;
+      }
+    }
+    return true;
   };
 
   TreeEditor.prototype.stageOperations = function (operations, source) {
     var self = this;
     (operations || []).forEach(function (operation) {
-      if (self._isNoop(operation)) { return; }
+      if (!operation) { return; }
+      if (!self._reconcile(operation)) { return; }
       var key = operation.op + "|" + (operation.path || "") + "|" + (operation.from || "");
       var existing = -1;
       self.pending.forEach(function (item, index) {
@@ -559,9 +603,9 @@
     if (projectedItems) { view.items = projectedItems; }
     if (ownSet) {
       /* Only the displayed value changes: the view modes stay as the user left
-       * them, so a dropped substitution does not come back on its own. */
+       * them, so a dropped substitution does not come back on its own. An edited
+       * value is not a new entry, so the row stays "dirty" only. */
       view.value_text = ownSet.value_text;
-      view.staged = true;
     }
     if (ownRemove) { view.pending_delete = true; }
     return view;
@@ -941,8 +985,15 @@
     return wrap;
   };
 
+  /* A substitution sits inside a literal of the declared type: a string field
+   * keeps its quotes, a field the descriptor converts (int, bool) stays a bare
+   * token, which is how the file writes them. Keeping the form of the file is
+   * also what lets an untouched substitution compare equal again. */
   TreeEditor.prototype._stageTemplate = function (node, name, fallback) {
-    this.stageOperations([{ op: "set", path: node.path, value_text: "${" + name + ":-" + fallback + "}" }], "user");
+    if (fallback === null || fallback === undefined) { fallback = ""; }
+    var text = "${" + name + ":-" + fallback + "}";
+    if (node.type === "string") { text = JSON.stringify(text); }
+    this.stageOperations([{ op: "set", path: node.path, value_text: text }], "user");
   };
 
   /* Drop the substitution: this node goes back to the value the file holds.
