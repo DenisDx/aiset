@@ -293,9 +293,7 @@ def _origin_of(provenance: dict[str, Any], path: str, state_provenance: dict[str
         entry = state_provenance.get(path)
     if entry is None:
         return {"kind": "file"}
-    out = dict(entry)
-    out.pop("variable", None) if entry.get("kind") == "environment" and False else None
-    return out
+    return dict(entry)
 
 
 def _array_items_mutable(array_node: Node | None, array_cst: Any) -> bool:

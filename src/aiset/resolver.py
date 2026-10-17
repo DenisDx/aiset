@@ -100,7 +100,7 @@ def resolve_value(
         return {
             key: resolve_value(
                 item,
-                _object_child_node(node, key),
+                _object_child_node(node, key, item),
                 resolver,
                 f"{path}/{_escape(key)}",
                 issues,
@@ -123,10 +123,33 @@ def _record_file(value: Any, path: str, provenance: dict[str, Any] | None) -> No
         provenance[path] = {"kind": "file"}
 
 
-def _object_child_node(node: Node, key: str) -> Node | None:
+def _object_child_node(node: Node, key: str, value: Any) -> Node | None:
+    """Node that governs one member of an object.
+
+    A `union` node carries its shapes in `children_options`, so an object member
+    whose type is a union has to be resolved through them. The rule mirrors the
+    array rule (`_array_item_node` takes `option_nodes[0]`): among the
+    alternatives that declare the key, the one whose declared type fits the
+    stored value wins, and the first declared one is the fallback. Validation
+    stays authoritative: `_validate_union` still checks the value against every
+    alternative and reports a single issue when none fits.
+
+    Without this, every `${VAR}` below such a node was reported as
+    `env_not_allowed`, which made the whole document unloadable.
+    """
     child = node.children.get(key) if node.children else None
     if child is not None:
         return child
+    if node.option_nodes:
+        candidates = [
+            option.children[key]
+            for option in node.option_nodes
+            if option.type == "object" and key in (option.children or {})
+        ]
+        if not candidates:
+            return None
+        shaped = [candidate for candidate in candidates if _accepts(candidate, _shape_of(value))]
+        return (shaped or candidates)[0]
     if node.additional_children is None:
         return None
     if node.key_enum and key not in node.key_enum:
@@ -135,9 +158,50 @@ def _object_child_node(node: Node, key: str) -> Node | None:
 
 
 def _array_item_node(node: Node, index: int) -> Node | None:
+    """Node that governs one item of an array.
+
+    `children_options` describes heterogeneous items positionally, so item `i`
+    is resolved with alternative `i` when one exists and with the first
+    alternative otherwise. Validation accepts any alternative and reports one
+    issue when none fits, so this is a resolution hint, not a rule.
+    """
     if node.option_nodes is not None:
-        return node.option_nodes[0] if node.option_nodes else None
+        if not node.option_nodes:
+            return None
+        return node.option_nodes[min(index, len(node.option_nodes) - 1)]
     return node.item_node
+
+
+def _shape_of(value: Any) -> str:
+    """Coarse JSON shape of a stored value, used to pick a union alternative."""
+    if isinstance(value, TemplateRef):
+        return "template"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return "null"
+
+
+def _accepts(node: Node, shape: str) -> bool:
+    """True when one union alternative can carry a value of this shape.
+
+    An unquoted placeholder carries no type yet, so it fits any alternative and
+    the caller falls back to the first one that declares the key.
+    """
+    if shape in ("template", "null") or node.type in ("any", "union"):
+        return True
+    if shape in ("object", "array"):
+        return node.type == shape
+    return node.type == shape
 
 
 def _resolve_template(
@@ -161,13 +225,17 @@ def _resolve_template(
             entry["source"] = origin
         provenance[path] = entry
     convert = node.env_convert or "string"
-    return _convert(value, node, path, issues, convert=convert, raw=value)
+    return _convert(value, node, path, issues, convert=convert)
 
 
-def _convert(
-    value: str, node: Node, path: str, issues: list[ValueIssue], *, convert: str | None = None,
-    raw: Any = None,
-) -> Any:
+def _convert(value: str, node: Node, path: str, issues: list[ValueIssue], *, convert: str | None = None) -> Any:
+    """Convert a resolved placeholder string to the type the node declares.
+
+    `value` is always the text to convert, in both call sites: the quoted form
+    and the unquoted `TemplateRef` form. There is deliberately no second
+    parameter for it, because an earlier revision had one that defaulted to
+    None and silently turned every quoted placeholder into the literal "None".
+    """
     convert = convert or (node.env_convert or "string")
     if convert == "string":
         return value
@@ -180,7 +248,7 @@ def _convert(
             ValueIssue(path, "env_conversion", "Boolean conversion accepts only 'true' or 'false'")
         )
         return None
-    text = (raw if isinstance(raw, str) else str(raw)).strip()
+    text = value.strip()
     if not text:
         issues.append(ValueIssue(path, "env_conversion", "Empty value cannot be converted"))
         return None

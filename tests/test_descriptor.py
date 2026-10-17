@@ -11,6 +11,7 @@ from aiset.descriptor import (
     validate_descriptor,
 )
 from aiset.errors import DescriptorError, InvalidDescriptor
+from aiset.validator import Limits, validate_document
 
 MINIMAL = """
 {
@@ -336,3 +337,166 @@ def test_child_apply_overrides_the_parent():
     descriptor = compile_descriptor(source, strict=True)
     assert descriptor.root.children["a"].apply == "live"
     assert descriptor.root.children["a"].children["b"].apply == "live"
+
+# --------------------------------------------------------------------------
+# the opaque `any` type
+# --------------------------------------------------------------------------
+
+ANY_DESCRIPTOR = """
+{
+  descriptor_version: "1.0",
+  root: {
+    type: "object",
+    children: {
+      schema: {
+        type: "object",
+        additional_children: { type: "any", description: "One free-form declaration" },
+      },
+      payload: { type: "any", description: "One free-form value" },
+    },
+  },
+}
+"""
+
+
+def test_any_is_a_valid_descriptor_type():
+    diagnostic = validate_descriptor(ANY_DESCRIPTOR, mode="strict")
+    assert diagnostic.valid, diagnostic.to_dict()
+
+
+def test_any_rejects_composite_keys():
+    source = ANY_DESCRIPTOR.replace(
+        'payload: { type: "any", description: "One free-form value" }',
+        'payload: { type: "any", children: {}, description: "x" }',
+    )
+    diagnostic = validate_descriptor(source, mode="default")
+    assert not diagnostic.valid
+
+
+def test_any_rejects_key_constraints():
+    source = ANY_DESCRIPTOR.replace(
+        'payload: { type: "any", description: "One free-form value" }',
+        'payload: { type: "any", key_pattern: "^a$", description: "x" }',
+    )
+    diagnostic = validate_descriptor(source, mode="default")
+    assert not diagnostic.valid
+
+
+def test_any_accepts_every_json_value():
+    descriptor = compile_descriptor(ANY_DESCRIPTOR, strict=True)
+    for value in (None, True, 1, 1.5, "text", [1, "two"], {"a": {"b": [1]}}):
+        assert validate_document(value, descriptor.root.children["payload"]) == []
+        assert validate_document({"x": value}, descriptor.root.children["schema"]) == []
+
+
+def test_any_still_obeys_the_structural_limits():
+    descriptor = compile_descriptor(ANY_DESCRIPTOR, strict=True)
+    deep: dict = {}
+    cursor = deep
+    for _ in range(10):
+        cursor["n"] = {}
+        cursor = cursor["n"]
+    issues = validate_document(deep, descriptor.root.children["payload"], limits=Limits(max_depth=4))
+    assert [issue for issue in issues if issue.rule == "max_depth"]
+
+
+def test_any_is_reported_as_a_leaf_with_a_text_control():
+    descriptor = compile_descriptor(ANY_DESCRIPTOR, strict=True)
+    node = descriptor.root.children["payload"]
+    described = node.describe()
+    assert described["type"] == "any"
+    assert node.children is None and node.additional_children is None
+
+
+def test_every_issue_carries_a_source_position():
+    source = (
+        '{\n'
+        '  descriptor_version: "1.0",\n'
+        '  root: {\n'
+        '    type: "object",\n'
+        '    children: {\n'
+        '      port: {\n'
+        '        typo: "string",\n'
+        '      },\n'
+        '    },\n'
+        '  },\n'
+        '}\n'
+    )
+    diagnostic = validate_descriptor(source, mode="default")
+    assert not diagnostic.valid
+    assert diagnostic.issues
+    for issue in diagnostic.issues:
+        assert issue.line is not None, issue.to_dict()
+        assert issue.column is not None, issue.to_dict()
+
+
+def test_a_syntax_error_reports_no_position_but_a_message():
+    diagnostic = validate_descriptor("{ descriptor_version: ", mode="default")
+    assert not diagnostic.valid
+    assert diagnostic.issues[0].code == "DESCRIPTOR_SYNTAX"
+    assert diagnostic.issues[0].message
+
+
+# --------------------------------------------------------------------------
+# node_at resolves through a union used as an object member type
+# --------------------------------------------------------------------------
+
+UNION_MEMBER_DESCRIPTOR = """
+{
+  descriptor_version: "1.0",
+  root: {
+    type: "object",
+    children: {
+      items: {
+        type: "object",
+        additional_children: {
+          type: "union",
+          children_options: [
+            { type: "object", children: { enabled: { type: "bool" } } },
+            {
+              type: "object",
+              children: {
+                label: { type: "string" },
+                port: { type: "int", minimum: 1, maximum: 65535 },
+              },
+            },
+          ],
+        },
+      },
+      steps: {
+        type: "array",
+        children_options: [
+          { type: "object", children: { op: { type: "string" } } },
+          { type: "int" },
+        ],
+      },
+    },
+  },
+}
+"""
+
+
+def test_node_at_resolves_a_member_of_a_union():
+    """Regression: an edit below a union member was refused as an undeclared path."""
+    descriptor = compile_descriptor(UNION_MEMBER_DESCRIPTOR, strict=True)
+    assert node_at(descriptor, "/items/a/port").type == "int"
+    assert node_at(descriptor, "/items/a/label").type == "string"
+    assert node_at(descriptor, "/items/a/enabled").type == "bool"
+
+
+def test_node_at_keeps_refusing_a_member_no_alternative_declares():
+    descriptor = compile_descriptor(UNION_MEMBER_DESCRIPTOR, strict=True)
+    assert node_at(descriptor, "/items/a/nope") is None
+
+
+def test_node_at_resolves_a_key_of_a_dynamic_object_below_a_union():
+    descriptor = compile_descriptor(UNION_MEMBER_DESCRIPTOR, strict=True)
+    root = descriptor.root.children["items"].additional_children.option_nodes[1]
+    assert node_at(root, "/port").type == "int"
+
+
+def test_node_at_walks_into_a_union_typed_node_directly():
+    descriptor = compile_descriptor(UNION_MEMBER_DESCRIPTOR, strict=True)
+    assert node_at(descriptor, "/steps/0").type == "object"
+    assert node_at(descriptor, "/steps/1").type == "int"
+    assert node_at(descriptor, "/steps/1/op") is None

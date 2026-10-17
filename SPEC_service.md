@@ -89,6 +89,20 @@ Rules:
   never a blind retry.
 - `stored_revision` is what is on disk after commit; `active_revision` is what
   the host has applied. They are distinct (SPEC_.md section 10).
+
+`application.state` tells the host what it has to do; the most restrictive
+`apply` policy of the changed paths wins.
+
+| State | Meaning | Host action |
+|---|---|---|
+| `applied` | every changed node is `live` | none; the next read sees the value |
+| `reload_required` | the host must re-read its configuration | reload and re-apply |
+| `restart_required` | only a restart picks the change up | restart |
+| `apply_failed` | the `on_application` callback raised | inspect; the file is committed but the running host did not apply it |
+
+`live` is the only state that advances `active_revision`. There is no separate
+"no action needed" state: `apply: "live"` already means that, and a node that
+leaves `apply` unset asks for `restart` rather than pretending to be live.
 - Token format is opaque to clients. The HTTP representation is a strong `ETag`
   equal to `sha256(source_revision + ":" + descriptor_revision)`, also returned
   as the `etag` field.
@@ -321,6 +335,54 @@ protections (SPEC_.md 3.3 and 11).
 `POST {base}/load/lkg` accepts `{"document": "main"}` and returns the LKG result
 from section 8. It does not accept a filesystem path or modify the document.
 
+## 10a. ASGI transport
+
+A host whose server is already async mounts the library without a WSGI bridge of
+its own. `aiset.asgi.create_asgi_app` returns a plain ASGI application built on
+the same dispatcher as the WSGI adapter, so the two transports cannot drift and
+the HTTP contract of section 10 is unchanged.
+
+```python
+from aiset.asgi import create_asgi_app
+
+app = create_asgi_app(
+    service,
+    base="/api/settings",
+    principal_from_scope=resolve_session,   # async host: build the Principal yourself
+    static_dir=None,                        # host files, when it has any
+    static_map={"/app.js": "app.js"},
+)
+```
+
+| Argument | Meaning |
+|---|---|
+| `service` | the same service the WSGI adapter takes |
+| `base` | mount prefix; identical to the WSGI adapter |
+| `principal_resolver(environ)` | synchronous lookup; receives the PEP 3333 environ, exactly as behind WSGI |
+| `principal_from_scope(scope)` | host lookup, synchronous or asynchronous; awaited before dispatch and wins when it returns a `Principal` |
+| `static_dir`, `assets_dir`, `static_map` | identical to the WSGI adapter |
+
+Contract details a host must know:
+
+- **Blocking work leaves the loop.** The service is synchronous, so the dispatch
+  runs in a worker thread whenever an asyncio loop is running, and inline
+  otherwise. A host on a non-asyncio server therefore gets synchronous calls.
+- **`principal_from_scope` exists because `principal_resolver` cannot await.** A
+  host that authenticates against a database hands over a finished `Principal`
+  and may make the hook `async def`; the adapter awaits it before the dispatch.
+  It must be awaited: an unawaited coroutine would be discarded inside the
+  worker thread and the request would fall back to `Principal.demo()`, which
+  holds every permission.
+- **`PATH_INFO` keeps the full path.** `build_environ` puts the requested path in
+  `PATH_INFO` and the mount prefix in `SCRIPT_NAME`, which is a documented
+  deviation from PEP 3333: the adapter routes on the full path, and a host that
+  mounts it under a prefix must not have to strip that prefix twice.
+- **Bodies are bounded.** The request body is read up to
+  `Limits.max_body_bytes` and a larger one is refused with `PAYLOAD_TOO_LARGE`,
+  exactly as over WSGI.
+- **Assets.** `/assets/...` is served from the installed package with or without
+  `static_dir`, on both transports.
+
 ## 11. MCP tools
 
 Register `settings_get`, `settings_validate`, `settings_set`, and
@@ -469,12 +531,22 @@ config.on_probe_changes(callback)   # sync or async; may reject
 config.on_after_save(callback)      # sync or async; notification
 ```
 
-- `probe_changes(before, after) -> ok | Rejection`: a rejection carries the
-  fields that were not accepted and a text explanation (the shared issue
-  format); returning it cancels the save. It may also be called for intermediate
-  validation without a following save.
+- `probe_changes(before, after, changed_paths) -> ok | Rejection`: a rejection
+  carries the fields that were not accepted and a text explanation (the shared
+  issue format); returning it cancels the save. It may also be called for
+  intermediate validation without a following save.
 - `after_save(before, after, event)`: called after a durable commit, outside the
-  file lock.
+  file lock. `before` and `after` are the stored trees, and `event` is the
+  `ChangeEvent` of section 13: `document`, `changed_paths`, `previous_revision`,
+  `revision`, `application_state`, `active_revision`. A host uses it to refresh
+  any value it derived from the resolved configuration.
+
+  The arguments are positional and fixed. A callback that cannot receive all
+  three is refused at registration with `TypeError`, because the commit-time
+  boundary logs and swallows every exception: a wrong arity would otherwise
+  surface only as a `callback_failed` log line while the host silently kept
+  stale values. A variadic callback (`*args`) is accepted, as is a callable
+  whose signature cannot be inspected.
 - For an asynchronous `probe_changes`, aiset awaits the decision before
   proceeding.
 - Every save callback uses the same bounded timeout policy as descriptor hooks:

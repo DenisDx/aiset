@@ -176,3 +176,28 @@ def test_symlink_policy(tmp_path):
     with pytest.raises(StorageError):
         store.check_symlink()
     Store("main", link, Settings(symlinks_allowed=True)).check_symlink()
+
+def test_commit_report_serialises_its_own_fields():
+    """Regression: the method lived at module level and named a field that does not exist."""
+    from aiset.store import CommitReport
+
+    report = CommitReport(document="demo", committed=True, revision="sha256:abc")
+    assert report.to_dict() == {
+        "document": "demo",
+        "committed": True,
+        "revision": "sha256:abc",
+        "uncertain": False,
+        "detail": "",
+    }
+
+
+def test_a_successful_write_returns_a_serialisable_report(tmp_path):
+    from aiset.store import Store
+
+    target = tmp_path / "config.json5"
+    target.write_text('{"a": 1}', encoding="utf-8")
+    store = Store("demo", target, Settings())
+    report = store.write_unchecked(b'{"a": 2}')
+    assert report.committed is True
+    assert report.to_dict()["document"] == "demo"
+    assert target.read_text(encoding="utf-8") == '{"a": 2}'

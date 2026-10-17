@@ -13,6 +13,7 @@ repository.
 | Drive aiset over HTTP or from JavaScript | Sections 6, 8-9 |
 | Write or fix a descriptor | Sections 7, 10 |
 | Understand placeholders, views, absent/null/default | Sections 10-11 |
+| Embed aiset in an async host | Section 3, and `SPEC_service.md` section 10a |
 | Extend the library or the tree editor | Sections 12-14, 18 |
 | Know what is forbidden | Section 1, Section 18 |
 | Normative interface detail | [SPEC_service.md](SPEC_service.md) |
@@ -21,7 +22,7 @@ repository.
 | Commands to run | [commands.md](commands.md), [TEST.md](TEST.md) |
 | Working rules of this repository | [AGENTS.md](AGENTS.md) (read-only) |
 
-Status: M1-M4 implemented, 332 tests pass, one document set. Nothing below is
+Status: M1-M4 implemented, one document set, `./test.sh` green. Nothing below is
 aspirational; every route, field and code exists in `src/aiset/`.
 
 ---
@@ -39,7 +40,9 @@ aspirational; every route, field and code exists in `src/aiset/`.
 5. Git belongs to the user. No commit, amend, or push without an explicit ask.
 6. Do not reimplement library behaviour inside a host: tree snapshots,
    operations, validation, revision handling and the editor are library
-   contracts, not host utilities.
+   contracts, not host utilities. Mount `create_asgi_app` rather than writing
+   a WSGI bridge; a WSGI bridge cannot carry an asynchronous principal and
+   `starlette.middleware.wsgi` is deprecated.
 7. The server is authoritative. Browser-side checks are advisory and must never
    block a submission the server would accept.
 8. After a change: tests, `./test.sh`, `SPEC_service.md` if the interface moved,
@@ -80,9 +83,23 @@ principal = Principal(id="user-42", permissions=frozenset({
     "settings_validate", "settings_write", "settings_read_secret",
 }))
 
-app = create_app(service, base="/api/settings", static_dir="frontend")
+app = create_app(service, base="/api/settings")
 # wsgiref.simple_server.make_server(host, port, app).serve_forever()
 ```
+
+An async host (FastAPI, Starlette, uvicorn) mounts the ASGI adapter instead of
+building a WSGI bridge of its own. It shares the dispatcher, and
+`principal_from_scope` covers the case the synchronous `principal_resolver`
+cannot:
+
+```python
+from aiset.asgi import create_asgi_app
+
+app = create_asgi_app(service, base="/api/settings", principal_from_scope=resolve_session)
+```
+
+`/assets/*` is served from the installed package with or without `static_dir`,
+so an API-only host still gets the editor.
 
 Rules for that snippet:
 
@@ -192,7 +209,7 @@ Error envelope: `{"ok": false, "error": {"code", "message", "issues"?}}`.
     description: "…",
     children: {
       port: {
-        type: "int",                  // string int number bool null object array union
+        type: "int",                  // string int number bool null object array union any
         description: "Listen port",
         minimum: 1, maximum: 65535,  // min_length max_length pattern enum const
         min_items: 0, max_items: 16, unique_items: true,   // arrays
@@ -220,6 +237,13 @@ Error envelope: `{"ok": false, "error": {"code", "message", "issues"?}}`.
 }
 ```
 
+- `type: "any"` is the opaque type: a region the host owns and the library does
+  not inspect. It accepts every JSON value including `null`, keeps no composite
+  key or key constraint, is a `leaf` in a snapshot, and is edited as source text.
+  Operational limits still apply; a `${VAR}` inside it stays literal.
+- A `union` as the type of an object member is resolved through the alternative
+  that declares that member; validation still accepts every alternative and
+  reports one issue when none fits.
 - Unknown properties are warnings by default and errors under `--strict`.
 - Validate before shipping: `.venv/bin/aiset validate-descriptor <file> --strict`
   (exit `0` valid, `1` invalid, `2` usage/IO error).
@@ -374,6 +398,8 @@ is an `array_item`, because `remove` and `move` address the item path.
 | Change | Files that must move together |
 |---|---|
 | New service method | `service.py`, `httpd.py` route, `SPEC_service.md`, `tests/test_service.py`, `tests/test_http.py` |
+| New transport or route | `httpd.py` dispatcher (shared), `asgi.py` when a transport changes shape, `SPEC_service.md`, `tests/test_asgi.py`, `tests/test_http.py` |
+| Resolver behaviour | `resolver.py`, `descriptor.py` node_at, `SPEC_.md` correction, `tests/test_resolver.py` |
 | New descriptor property | `descriptor.py` (parse, validate, `describe`), `SPEC.md` correction in `SPEC_.md`, `tests/test_descriptor.py` |
 | New operation | `jsonsrc.py` (source edit), `service.py` (authorize, validate), `SPEC_.md`, `tests/test_tree_and_operations.py` |
 | New snapshot field | `tree.py`, editor rendering, `SPEC_service.md` section 20/21, `tests/test_tree_and_operations.py` |

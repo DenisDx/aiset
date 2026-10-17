@@ -14,7 +14,7 @@ python3 -m venv .venv
 ## Tests
 
 ```sh
-.venv/bin/python -m pytest                    # library + demo2 suite (310 tests)
+.venv/bin/python -m pytest                    # library + demo2 suite
 .venv/bin/python -m pytest tests              # library suite only
 .venv/bin/python -m pytest demo2/tests        # demo2 host and assistant only
 .venv/bin/python -m pytest tests/test_jsonsrc.py -q   # source preservation only

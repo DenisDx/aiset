@@ -309,3 +309,115 @@ Add to SPEC.md 10.2, next to the update rule:
   keeps owning its own values; the default precedence makes an edit visible
   immediately, and the next reload of the layer cannot take it back.
 ```
+
+---
+
+## Correction 6: the value-type list gains `any`, and `apply` gains no new value
+
+Requested by the aidir integration (`proposal_improvement_aidir.md` P3).
+
+### Old text (SPEC.md 4.6.1, value types)
+
+```text
+Value types: string, int, number, bool, null, object, array, union.
+```
+
+### Reason for the correction
+
+A host frequently owns a region of its configuration whose shape the shared
+library cannot and should not know: a JSON schema, a plugin declaration, a tool
+description, an arbitrary extension map. Before this correction the grammar had
+no way to say "this value is opaque", and every alternative was a loss:
+
+- omitting the key produced `undeclared_field`, an error, so the first real value
+  made the whole document unloadable;
+- declaring it as an object produced an error for every key of that object,
+  because an object node without `children` or `additional_children` accepts
+  nothing;
+- spelling out a nesting depth worked but had to be maintained by hand and was
+  silently too shallow for a deeper document.
+
+### Recommended new text
+
+```text
+Value types: string, int, number, bool, null, object, array, union, any.
+
+`any` is the opaque type. A node of type `any` accepts every JSON value,
+including null, and is not inspected further: no type rule, no constraint, no
+null rule and no recursion into its members. It exists so that a host can
+declare a region it owns without inventing a schema for it.
+
+Rules for `any`:
+
+- `any` accepts only the `description`, `title`, `ui`, `env`, `secret`,
+  `read_only`, `apply`, `validators`, `hooks` and `helper` properties, plus
+  `required`. A composite key (`children`, `children_options`,
+  `additional_children`) or a key constraint (`key_pattern`, `key_enum`) on an
+  `any` node is a descriptor error, exactly as on any other scalar type.
+- The operational limits of section 11 still apply to an opaque value: maximum
+  depth, collection size, string length and file size are checked structurally
+  before the value is handed over.
+- A `${VAR}` placeholder inside an opaque value stays literal. `env.allowed` on
+  the `any` node governs the node itself, not its members, because resolving the
+  members would require understanding their shape.
+- In a snapshot (section 8.4 / SPEC_service.md 19) an `any` node is a `leaf`:
+  one source fragment, editable, never expanded into members.
+- In the generated editor (SPEC_service.md 21) an `any` node is edited as source
+  text, like any other node the library does not decompose.
+
+No new `apply` value is introduced. `live` already means "the next read sees the
+value", which is what a host that needs no action wants; a node that leaves
+`apply` unset keeps asking for `restart`.
+```
+
+---
+
+## Correction 7: an object member whose type is a `union` is resolved through the union
+
+Requested by the aidir integration (`proposal_improvement_aidir.md` P1).
+
+### Old text (SPEC.md 4.6.10, templates and alternatives)
+
+```text
+children_options declares the alternatives of a union. A union is validated
+against every alternative and a value that matches none of them is an error.
+```
+
+### Reason for the correction
+
+The text describes validation only, and the implementation of the environment
+resolver disagreed with it in exactly one position. `resolve_value` obtained the
+descriptor node of an object member from `children` and `additional_children`
+only, so a member whose type is a `union` - where the shapes live in
+`children_options` - was resolved against no node at all. The consequences were
+not cosmetic:
+
+- an unquoted `${VAR}` below such a node reported `env_not_allowed`, an
+  error-severity issue, so `analyze` discarded the whole document state and the
+  configuration became unreadable;
+- a quoted `"${VAR}"` below such a node stayed unresolved and then failed the
+  union validation with a message that pointed at the wrong thing.
+
+The array position never had this defect: `_array_item_node` already returned
+`option_nodes[0]`. The specification therefore described one behaviour for both
+positions and the code implemented two different ones.
+
+### Recommended new text
+
+```text
+children_options declares the alternatives of a union. A union is validated
+against every alternative and a value that matches none of them is an error.
+
+Resolution of an alternative is a hint, never a rule:
+
+- an array item is resolved with the alternative at its own index, and with the
+  last alternative when the array is longer than the alternative list;
+- a member of an object whose type is a union is resolved with the alternative
+  that declares that member, preferring one whose declared type fits the stored
+  value, and taking the first declared one when several declare it or the value
+  carries no type yet (an unquoted placeholder).
+
+Validation remains authoritative in both positions: the value is checked against
+every alternative and a single issue is reported when none fits. A resolution
+choice can therefore never make an invalid value valid.
+```

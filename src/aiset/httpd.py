@@ -1,14 +1,18 @@
-"""HTTP adapter (SPEC.md 8.2, SPEC_service.md section 10).
+"""HTTP adapters (SPEC.md 8.2, SPEC_service.md section 10).
 
-A dependency-free WSGI application: the standalone demo serves it directly and a
-host mounts the same app inside its own authenticated server. It is a thin
-adapter; every decision belongs to the service.
+Two dependency-free adapters over one dispatcher: a WSGI application that the
+standalone demo serves directly and a host can mount inside its own
+authenticated server, and an ASGI application for hosts whose server is already
+async. Both share the same routing, so they cannot drift apart.
+
+The adapters are thin; every decision belongs to the service.
 """
 
 from __future__ import annotations
 
 import email.utils
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs
@@ -19,6 +23,24 @@ from .merge import PREFERENCES, merge
 from .service import Principal, Service
 
 JSON_HEADERS = [("Content-Type", "application/json; charset=utf-8")]
+
+
+@dataclass
+class _Request:
+    """One normalized request, independent of the transport that carried it."""
+
+    method: str
+    path: str
+    query: str = ""
+    body: bytes = b""
+    # The WSGI environ is kept so that a host-provided `principal_resolver` sees
+    # the same mapping it would see behind the WSGI adapter. `scope` is the ASGI
+    # equivalent, for `principal_from_scope`.
+    environ: dict[str, Any] | None = None
+    scope: Any = None
+    # Set by the ASGI adapter once it has resolved an asynchronous principal, so
+    # that the synchronous dispatcher never has to deal with an awaitable.
+    principal: Any = None
 
 
 def create_app(
@@ -32,31 +54,86 @@ def create_app(
 ) -> Callable[[dict[str, Any], Callable[..., Any]], Iterable[bytes]]:
     """Build the WSGI application for one service.
 
-    `static_map` adds host files (for example a host script or stylesheet) to
-    the bundled frontend: route path -> file name inside `static_dir`.
+    `static_map` adds host files (for example a host script or stylesheet) to the
+    bundled frontend: route path -> file name inside `static_dir`. The bundled
+    browser assets under `/assets/` are served with or without `static_dir`.
     """
+    dispatch = _build_dispatcher(
+        service,
+        base=base,
+        principal_resolver=_environ_resolver(principal_resolver),
+        static_dir=static_dir,
+        assets_dir=assets_dir,
+        static_map=static_map,
+    )
+
+    def app(environ: dict[str, Any], start_response: Callable[..., Any]) -> Iterable[bytes]:
+        request = _Request(
+            method=environ.get("REQUEST_METHOD", "GET").upper(),
+            path=environ.get("PATH_INFO", "") or "/",
+            query=environ.get("QUERY_STRING", ""),
+            body=_wsgi_body(environ),
+            environ=environ,
+        )
+        return dispatch(request, start_response)
+
+    return app
+
+
+def _environ_resolver(
+    principal_resolver: Callable[[dict[str, Any]], Principal] | None,
+) -> Callable[["_Request"], Principal]:
+    """Adapt a host environ resolver to the transport-independent dispatcher."""
+
+    def resolve(request: "_Request") -> Principal:
+        if principal_resolver is None:
+            return Principal.demo()
+        return principal_resolver(request.environ if request.environ is not None else {})
+
+    return resolve
+
+
+def _build_dispatcher(
+    service: Service,
+    *,
+    base: str,
+    principal_resolver: Callable[[_Request], Principal] | None = None,
+    static_dir: str | Path | None = None,
+    assets_dir: str | Path | None = None,
+    static_map: dict[str, str] | None = None,
+) -> Callable[[_Request, Callable[..., Any]], Iterable[bytes]]:
+    """Route one normalized request; shared by every transport."""
     base = base.rstrip("/")
     static_root = Path(static_dir) if static_dir else None
     asset_root = Path(assets_dir) if assets_dir else Path(__file__).parent / "assets"
 
-    def resolve_principal(environ: dict[str, Any]) -> Principal:
-        if principal_resolver is not None:
-            return principal_resolver(environ)
-        return Principal.demo()
+    def resolve_principal(request: _Request) -> Principal:
+        if request.principal is not None:
+            return request.principal
+        if principal_resolver is None:
+            return Principal.demo()
+        return principal_resolver(request)
 
-    def app(environ: dict[str, Any], start_response: Callable[..., Any]) -> Iterable[bytes]:
-        method = environ.get("REQUEST_METHOD", "GET").upper()
-        path = environ.get("PATH_INFO", "") or "/"
+    def dispatch(request: _Request, start_response: Callable[..., Any]) -> Iterable[bytes]:
+        method = request.method
+        path = request.path or "/"
         try:
             if path == "/api/health" or path == f"{base}/health":
                 return _json(start_response, 200, {"ok": True, "aiset": __version__})
             if path.startswith(base):
                 return _handle_api(
-                    service, environ, start_response, method, path[len(base) :] or "/", resolve_principal
+                    service,
+                    request,
+                    start_response,
+                    method,
+                    path[len(base) :] or "/",
+                    resolve_principal(request),
                 )
-            if static_root is not None:
+            if static_root is not None or path.startswith("/assets/"):
                 return _static(start_response, static_root, path, asset_root, static_map or {})
-            return _json(start_response, 404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found"}})
+            return _json(
+                start_response, 404, {"ok": False, "error": {"code": "NOT_FOUND", "message": "Not found"}}
+            )
         except AisetError as exc:
             return _json(start_response, exc.http_status, exc.to_envelope())
         except Exception as exc:  # noqa: BLE001 - sanitized unexpected failure
@@ -70,7 +147,19 @@ def create_app(
                 },
             )
 
-    return app
+    return dispatch
+
+
+def _wsgi_body(environ: dict[str, Any]) -> bytes:
+    """Read the request body a WSGI server has already placed in the environ."""
+    try:
+        length = int(environ.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        raise BadRequest("Invalid Content-Length") from None
+    stream = environ.get("wsgi.input")
+    if stream is None or length <= 0:
+        return b""
+    return stream.read(length)
 
 
 # --------------------------------------------------------------------------
@@ -80,14 +169,13 @@ def create_app(
 
 def _handle_api(
     service: Service,
-    environ: dict[str, Any],
+    request: _Request,
     start_response: Callable[..., Any],
     method: str,
     route: str,
-    resolve_principal: Callable[[dict[str, Any]], Principal],
+    principal: Principal,
 ) -> Iterable[bytes]:
-    principal = resolve_principal(environ)
-    query = parse_qs(environ.get("QUERY_STRING", ""))
+    query = parse_qs(request.query)
 
     if method == "GET" and route == "/descriptor":
         document = _one(query, "document")
@@ -115,7 +203,7 @@ def _handle_api(
         return _json(start_response, 200, {"ok": True, "documents": sorted(service.documents)})
 
     if method == "POST" and route == "/validate":
-        payload = _body(environ, service)
+        payload = _body(request, service)
         result = service.validate(
             _one(payload, "document"),
             _one(payload, "path") or "",
@@ -127,7 +215,7 @@ def _handle_api(
         return _json(start_response, 200, result.to_dict())
 
     if method == "POST" and route == "/value":
-        payload = _body(environ, service)
+        payload = _body(request, service)
         result = service.set(
             _one(payload, "document"),
             _one(payload, "path") or "",
@@ -139,7 +227,7 @@ def _handle_api(
         return _json(start_response, 200, result.to_dict())
 
     if method == "POST" and route in ("/operations", "/operations/validate"):
-        payload = _body(environ, service)
+        payload = _body(request, service)
         result = service.apply_operations(
             _one(payload, "document"),
             _operations(payload),
@@ -151,7 +239,7 @@ def _handle_api(
         return _json(start_response, 200, result.to_dict())
 
     if method == "POST" and route == "/env":
-        payload = _body(environ, service)
+        payload = _body(request, service)
         names = payload.get("names")
         if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
             raise BadRequest("'names' must be a nonempty array of variable names")
@@ -159,24 +247,24 @@ def _handle_api(
         return _json(start_response, 200, {"ok": True, "present": present})
 
     if method == "POST" and route == "/load":
-        payload = _body(environ, service)
+        payload = _body(request, service)
         result = service.load(_one(payload, "document"), principal=principal)
         return _json(start_response, 200, result.to_dict())
 
     if method == "POST" and route == "/load/lkg":
-        payload = _body(environ, service)
+        payload = _body(request, service)
         result = service.load_lkg(_one(payload, "document"), principal=principal)
         return _json(start_response, 200, result.to_dict())
 
     if method == "POST" and route == "/descriptor/validate":
-        payload = _body(environ, service)
+        payload = _body(request, service)
         source = payload.get("descriptor_source") or ""
         mode = payload.get("mode") or "default"
         result = service.validate_descriptor(source, mode=mode)
         return _json(start_response, 200, result.to_dict())
 
     if method == "POST" and route == "/merge":
-        payload = _body(environ, service)
+        payload = _body(request, service)
         if "base" not in payload or "update" not in payload:
             raise BadRequest("merge requires 'base' and 'update'")
         prefer = str(payload.get("prefer") or "base")
@@ -211,15 +299,11 @@ def _one(mapping: dict[str, Any], key: str) -> str | None:
     return value
 
 
-def _body(environ: dict[str, Any], service: Service) -> dict[str, Any]:
-    try:
-        length = int(environ.get("CONTENT_LENGTH") or 0)
-    except ValueError:
-        raise BadRequest("Invalid Content-Length") from None
-    if length > service.settings.limits.max_body_bytes:
+def _body(request: _Request, service: Service) -> dict[str, Any]:
+    """Decode a JSON object request body, enforcing the configured body limit."""
+    if len(request.body) > service.settings.limits.max_body_bytes:
         raise PayloadTooLarge(f"Request body exceeds {service.settings.limits.max_body_bytes} bytes")
-    stream = environ.get("wsgi.input")
-    raw = stream.read(length) if stream is not None and length else b""
+    raw = request.body
     if len(raw) > service.settings.limits.max_body_bytes:
         raise PayloadTooLarge("Request body is too large")
     if not raw:
@@ -259,24 +343,32 @@ def _http_date(timestamp: float) -> str:
 
 def _static(
     start_response: Callable[..., Any],
-    root: Path,
+    root: Path | None,
     path: str,
     assets_root: Path,
     static_map: dict[str, str] | None = None,
 ) -> Iterable[bytes]:
-    """Serve the bundled frontend (assets live inside the package)."""
-    if path in ("/", "/index.html"):
+    """Serve the bundled browser assets and, when a host supplies one, its files.
+
+    `/assets/*` always resolves inside the package, with or without `static_dir`,
+    so a host that only wants the API still gets the editor. `root` is required
+    for every other route: without it there is no host directory to serve from
+    and no path is resolved against the process working directory.
+    """
+    if path.startswith("/assets/"):
+        name = path[len("/assets/") :]
+        if "/" in name or ".." in name:
+            return _not_found(start_response)
+        target = assets_root / name
+    elif root is None:
+        return _not_found(start_response)
+    elif path in ("/", "/index.html"):
         target = root / "index.html"
     elif static_map and path in static_map:
         name = static_map[path]
         if "/" in name or ".." in name:
             return _not_found(start_response)
         target = root / name
-    elif path.startswith("/assets/"):
-        name = path[len("/assets/") :]
-        if "/" in name or ".." in name:
-            return _not_found(start_response)
-        target = assets_root / name
     else:
         return _not_found(start_response)
     if not target.is_file():

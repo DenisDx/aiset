@@ -1018,6 +1018,9 @@
       });
       return input;
     }
+    /* Everything else is edited as source text: objects and arrays that cannot
+     * be edited member by member, `null`, and the opaque `any` type, whose value
+     * the library deliberately does not inspect. */
     var area = element("textarea", { rows: (field.ui && field.ui.rows) || 3, "aria-label": "Value for " + node.path });
     area.value = current;
     if (field.ui && field.ui.placeholder) { area.placeholder = field.ui.placeholder; }

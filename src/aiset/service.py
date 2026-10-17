@@ -375,13 +375,36 @@ class Service:
         return registration
 
     # -- callbacks -------------------------------------------------------
+    # Every callback runs after the commit, outside the lock, through `_call`,
+    # which supports sync and async callables and bounds them with
+    # `callback_timeout_seconds`. A callback that raises is logged as
+    # `callback_failed` and never undoes a committed write.
+    #
+    # `on_probe_changes(callback)` -> callback(previous_stored, new_stored,
+    #   changed_paths). Returning `Rejection` vetoes the write before it is stored.
+    # `on_after_save(callback)`    -> callback(previous_stored, new_stored,
+    #   event.to_dict()), where `event` is a ChangeEvent: `document`,
+    #   `changed_paths`, `previous_revision`, `revision`, `application_state`,
+    #   `active_revision`. The host uses it to refresh any cache it derived from
+    #   the resolved configuration.
+    # `on_application(callback)`  -> callback(previous_effective,
+    #   new_effective, changed_paths); it is called only for `live` and `reload`
+    #   changes and only when the descriptor demands one.
+    # `subscribe(document_id, paths, callback)` -> callback(ChangeEvent).
+
     def on_probe_changes(self, callback: Callable[..., Any]) -> None:
+        """Host veto hook, called before a candidate is stored."""
+        _require_callback_arity(callback, ("before", "after", "changed_paths"))
         self._probe_changes.append(callback)
 
     def on_after_save(self, callback: Callable[..., Any]) -> None:
+        """Post-commit hook: (previous_stored, new_stored, event)."""
+        _require_callback_arity(callback, ("previous", "current", "event"))
         self._after_save.append(callback)
 
     def on_application(self, callback: Callable[..., Any]) -> None:
+        """Apply hook for `live` and `reload` changes: (before, after, paths)."""
+        _require_callback_arity(callback, ("previous", "current", "changed_paths"))
         self._application.append(callback)
 
     def subscribe(
@@ -1299,7 +1322,22 @@ class Service:
     def _apply_change(
         self, state: DocumentState, new_state: DocumentState, changed_paths: list[str]
     ) -> str:
-        """The most restrictive `apply` policy of the changed paths wins."""
+        """Application state of one committed write.
+
+        The most restrictive `apply` policy of the changed paths wins and becomes
+        the reported state:
+
+        | state | meaning for the host |
+        |---|---|
+        | `applied` | every changed node is `live`; the next read already sees the value |
+        | `reload_required` | the host must re-read its configuration and re-apply it |
+        | `restart_required` | only a process restart picks the change up |
+        | `apply_failed` | the `on_application` callback raised; the file is committed but the host did not apply it |
+
+        `live` is also the policy a node without an explicit `apply` must not
+        get: the descriptor default is `restart`, so an unmarked node always asks
+        for a restart rather than pretending to be live.
+        """
         required = "live"
         for changed in changed_paths:
             node = self._node_for(state.registration, changed, required=False)
@@ -1457,6 +1495,40 @@ def _issue_summary(issues: list[ValueIssue]) -> str:
         if issue.severity == "error":
             return f"{issue.rule} at {issue.path or '/'}: {issue.message}"
     return "configuration is invalid"
+
+
+def _require_callback_arity(callback: Callable[..., Any], names: tuple[str, ...]) -> None:
+    """Reject a host callback whose signature cannot receive the documented arguments.
+
+    The callbacks are invoked positionally after the commit, inside a boundary
+    that logs and swallows every exception. A wrong arity would therefore
+    surface only as a `callback_failed` log line while the host silently kept
+    stale values - the exact failure this check exists to prevent. Callables
+    whose signature cannot be inspected (builtins, C callables) are accepted.
+    """
+    import inspect
+
+    try:
+        signature = inspect.signature(callback)
+    except (TypeError, ValueError):
+        return
+    positional = 0
+    variadic = False
+    for parameter in signature.parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            variadic = True
+        elif parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            positional += 1
+    if variadic or positional >= len(names):
+        return
+    wanted = ", ".join(names)
+    raise TypeError(
+        f"{getattr(callback, '__qualname__', callback)!r} must accept {wanted}; "
+        f"it accepts {positional} positional argument(s)"
+    )
 
 
 def _locate(document: Document, pointer: str) -> tuple[int | None, int | None]:

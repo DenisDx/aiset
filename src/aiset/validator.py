@@ -134,6 +134,8 @@ def is_number(value: Any) -> bool:
 
 
 def type_matches(node_type: str, value: Any) -> bool:
+    if node_type == "any":
+        return True
     if node_type == "string":
         return isinstance(value, str)
     if node_type == "bool":
@@ -155,6 +157,11 @@ def type_matches(node_type: str, value: Any) -> bool:
 
 def type_error(node: Node, value: Any) -> str:
     return f"Expected {node.type}, got {_kind_of(value)}"
+
+
+def is_opaque(node: Node | None) -> bool:
+    """True for a node that accepts every JSON value."""
+    return node is not None and node.type == "any"
 
 
 def _kind_of(value: Any) -> str:
@@ -202,6 +209,10 @@ def validate_value(
         )
         return issues
     if not present:
+        return issues
+    if is_opaque(node):
+        # An opaque value is not inspected: no type, no constraint, no null rule.
+        # The structural limits of check_limits still apply before this point.
         return issues
     if value is None:
         if node.nullable or node.type == "null":

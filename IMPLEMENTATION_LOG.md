@@ -145,6 +145,54 @@ generated forms/helpers, AI) are out of scope and reported as explicit
 - [x] J9. Tests: 36 demo2 tests (including a local fake provider) and 36 new
       library tests for the tree, operations, and UI assets.
 
+### Phase K - host-integration improvements (aidir, `proposal_improvement_aidir.md`)
+
+Requested by the first real host while embedding the library. Every item was
+reproduced against this checkout before a line was written; the proposal file
+holds the reproductions and stays the record of what was asked for.
+
+- [x] K1. `resolver._convert` took the text to convert through a second
+      parameter that defaulted to `None` and turned every quoted `"${VAR}"`
+      with a non-string `env.convert` into the literal `"None"`. The parameter
+      is gone; both call sites pass the resolved text. Regression tests cover
+      int, bool and inline-default conversions.
+- [x] K2. An object member whose type is a `union` was resolved against no
+      descriptor node, because the shapes live in `children_options` and the
+      resolver only looked at `children`/`additional_children`. Every `${VAR}`
+      below such a node reported `env_not_allowed`, an error-severity issue, so
+      the document stopped loading entirely. The resolver now picks the
+      alternative that declares the member, preferring one whose declared type
+      fits the stored value; validation stays authoritative.
+- [x] K3. `aiset.asgi.create_asgi_app`: an ASGI transport over the same
+      dispatcher as the WSGI adapter, with `principal_from_scope` for hosts that
+      authenticate asynchronously, worker-thread offload under asyncio, and a
+      bounded body read. Documented as `SPEC_service.md` section 10a.
+- [x] K4. `/assets/*` is served from the installed package with or without
+      `static_dir`, so a host that only wants the API still gets the editor.
+      Without a host directory nothing else resolves, and nothing is ever
+      resolved against the process working directory.
+- [x] K5. `type: "any"`: the opaque value type, so a host can declare a region
+      it owns (a JSON schema, a tool declaration, an extension map) without
+      inventing a schema for it. Limits still apply; a placeholder inside an
+      opaque value stays literal; in a snapshot it is a `leaf` and in the editor
+      it is source text. Corrected in `SPEC_.md` correction 6.
+- [x] K6. Union resolution is now specified as well as implemented: an array
+      item resolves with the alternative at its index, an object member with
+      the alternative that declares it. `SPEC_.md` correction 7.
+- [x] K7. Host callbacks are checked at registration: a callback that cannot
+      receive the documented three arguments raises `TypeError` instead of
+      failing later as a swallowed `callback_failed` log line while the host
+      kept stale values. The `application.state` table and the `event` fields
+      are documented in `SPEC_service.md` sections 9 and 16.
+- [x] K8. Descriptor diagnostics carry `line` and `column`, read from the same
+      CST the editor uses; a path naming a missing property is reported at the
+      nearest existing ancestor.
+- [x] K9. Cleanups: `CommitReport.to_dict` moved into its class and its
+      `document_id` reference corrected (it could not have worked), the dead
+      `and False` expression in `tree._origin_of` removed, the positional array
+      resolver aligned with `descriptor.node_at`, and the stale test counts in
+      README/AGENT_INTEGRATION/commands replaced by a pointer to `./test.sh`.
+
 ### Phase H - verification and documents
 
 - [x] H1. `tests/` covering the M1 acceptance matrix with pytest.
@@ -476,3 +524,12 @@ generated forms/helpers, AI) are out of scope and reported as explicit
   created explicitly: `python3 -m venv .venv` plus
   `.venv/bin/python -m pip install -e ".[dev]"`. aiset never creates or
   switches it itself (SPEC 3.4).
+
+- 2026-10-17. Phase K is complete and `./test.sh` is green. Two defects were
+  found only because a host ran the library against a real 42 KB
+  configuration with 44 environment placeholders: the union resolution gap (K2)
+  and the quoted-placeholder conversion (K1). Both were silent in the library
+  test suite because no fixture combined a union with a placeholder. The lesson
+  for the suite: a host-shaped fixture is worth more than a grammar fixture, and
+  `proposal_improvement_aidir.md` is now the standing checklist for the next
+  host.

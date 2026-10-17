@@ -16,8 +16,9 @@ every document and what it is responsible for, per the agent workflow in
 | [TEST.md](TEST.md) | Test protocol: automated suite coverage, manual browser and demo protocol, acceptance matrix mapping. |
 | [commands.md](commands.md) | Real commands: local environment setup, demo start, tests, descriptor CLI. |
 | [DOCUMENTS.MD](DOCUMENTS.MD) | This document map. |
-| [SPEC_.md](SPEC_.md) | Proposed corrections to the protected `SPEC.md`: structural operations, tree snapshots, generated editors, and the phase 4 list. |
+| [SPEC_.md](SPEC_.md) | Proposed corrections to the protected `SPEC.md`: structural operations, tree snapshots, generated editors, the phase 4 list, merge precedence, the `any` value type, and union resolution. |
 | [proposal_demo2.md](proposal_demo2.md) | Proposal that defines the `demo2` acceptance host and the reusable editor extensions it required. |
+| [proposal_improvement_aidir.md](proposal_improvement_aidir.md) | Changes the aidir host needs from the library, each with a reproduction; every item is implemented and recorded in `IMPLEMENTATION_LOG.md` phase K. |
 | [AGENTS.md](AGENTS.md) | Exact copy of the host agent workflow; read-only for agents. |
 | [memory/context.md](memory/context.md) | Working context between sessions: decisions, open questions, user preferences, notes. |
 | [memory/history.md](memory/history.md) | Chronological record of requests, operations and results. |

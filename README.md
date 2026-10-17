@@ -45,7 +45,7 @@ environment itself.
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
-.venv/bin/python -m pytest              # 230 automated tests
+.venv/bin/python -m pytest              # see ./test.sh for the current count
 .venv/bin/python demo_app.py            # http://127.0.0.1:8383
 ```
 
@@ -103,6 +103,20 @@ from aiset.httpd import create_app
 
 app = create_app(service, base="/api/settings")
 ```
+
+A host whose server is already async uses the ASGI adapter instead. It shares
+the dispatcher with the WSGI one, so the two cannot drift, and
+`principal_from_scope` lets an asynchronous session check hand over a finished
+`Principal`:
+
+```python
+from aiset.asgi import create_asgi_app
+
+app = create_asgi_app(service, base="/api/settings", principal_from_scope=resolve_session)
+```
+
+The bundled browser assets under `/assets/` are served either way, with or
+without a `static_dir`.
 
 ## Generated tree editor
 
@@ -181,7 +195,8 @@ aiset/
     service.py              the shared read/validate/set pipeline
     config_obj.py           Config object model and mount grammar
     merge.py                pure merge(base, update)
-    httpd.py                WSGI HTTP adapter
+    httpd.py                WSGI HTTP adapter and the shared dispatcher
+    asgi.py                 ASGI adapter for async hosts
     cli.py                  `aiset validate-descriptor`
     assets/                 reusable UI assets (JS + CSS)
   frontend/index.html       demo page using the shipped assets

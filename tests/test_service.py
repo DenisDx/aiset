@@ -544,3 +544,110 @@ def test_document_source_is_a_valid_document_after_every_write(demo_dir, service
                              expected_descriptor_revision=descriptor, principal=principal)
         source = result.revision
     Document(read(demo_dir / "config.json5"))
+
+# --------------------------------------------------------------------------
+# the opaque `any` type end to end
+# --------------------------------------------------------------------------
+
+ANY_DOCUMENT = """{
+  descriptor_version: "1.0",
+  root: {
+    type: "object",
+    children: {
+      tools: {
+        type: "object",
+        additional_children: { type: "any", description: "One free-form declaration" },
+      },
+    },
+  },
+}
+"""
+
+
+def _any_service(tmp_path, config_text):
+    from aiset.resolver import Resolver
+    from aiset.service import Service
+
+    target = tmp_path / "config.json5"
+    target.write_text(config_text, encoding="utf-8")
+    service = Service()
+    service.register("any", target, ANY_DOCUMENT, resolver=Resolver(overrides={}, dotenv={}, environ={}))
+    return service
+
+
+def test_free_form_region_loads_and_keeps_arbitrary_json(tmp_path):
+    config = """
+    {
+      tools: {
+        builtin: { description: "Run a command", parameters: { type: "object", properties: { cmd: { type: "string" } } } },
+        counter: 3,
+        flag: true,
+        nothing: null,
+        list: [1, "two", { three: 3 }],
+      },
+    }
+    """
+    service = _any_service(tmp_path, config)
+    loaded = service.load("any", principal=Principal.demo())
+    assert loaded.invalid_on_disk is False
+    assert loaded.effective["tools"]["counter"] == 3
+    assert loaded.effective["tools"]["flag"] is True
+    assert loaded.effective["tools"]["nothing"] is None
+
+
+def test_free_form_region_is_written_as_source_text(tmp_path):
+    service = _any_service(tmp_path, "{ tools: {} }\n")
+    loaded = service.load("any", principal=Principal.demo())
+    result = service.apply_operations(
+        "any",
+        [{"op": "add", "path": "/tools/new", "value_text": '{ a: [1, 2], b: "x" }'}],
+        expected_revision=loaded.revision,
+        expected_descriptor_revision=loaded.descriptor_revision,
+        principal=Principal.demo(),
+    )
+    assert result.stored is True
+    reread = service.load("any", principal=Principal.demo())
+    assert reread.invalid_on_disk is False
+    assert reread.effective["tools"]["new"] == {"a": [1, 2], "b": "x"}
+
+
+def test_free_form_region_is_one_leaf_in_a_snapshot(tmp_path):
+    service = _any_service(tmp_path, '{ tools: { a: { deep: [1] } } }')
+    service.load("any", principal=Principal.demo())
+    snapshot = service.tree("any", "/tools/a", principal=Principal.demo())
+    node = snapshot["node"]
+    assert node["kind"] == "leaf"
+    assert node["type"] == "any"
+    assert node["capabilities"]["edit"] is True
+
+
+# --------------------------------------------------------------------------
+# host callback signatures
+# --------------------------------------------------------------------------
+
+
+def test_a_callback_with_the_wrong_arity_is_refused_at_registration(service):
+    """Regression: a wrong arity used to be swallowed at commit time as callback_failed."""
+    with pytest.raises(TypeError) as caught:
+        service.on_after_save(lambda previous: None)
+    assert "event" in str(caught.value)
+
+
+@pytest.mark.parametrize("register", ["on_probe_changes", "on_after_save", "on_application"])
+def test_every_callback_accepts_the_documented_three_arguments(service, register):
+    getattr(service, register)(lambda previous, current, third: None)
+    getattr(service, register)(lambda *args: None)
+    getattr(service, register)(lambda previous, current, third, extra: None)
+
+
+def test_a_method_with_the_documented_signature_is_accepted(service):
+    class Host:
+        def on_after_save(self, previous, current, event):
+            return None
+
+    host = Host()
+    service.on_after_save(host.on_after_save)
+
+
+def test_a_callback_without_an_inspectable_signature_is_accepted(service):
+    service.on_after_save(print)

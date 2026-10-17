@@ -114,9 +114,9 @@ class CommitReport:
     uncertain: bool = False
     detail: str = ""
 
-def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
-            "document": self.document_id,
+            "document": self.document,
             "committed": self.committed,
             "revision": self.revision,
             "uncertain": self.uncertain,

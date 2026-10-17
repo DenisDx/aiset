@@ -179,3 +179,171 @@ def test_template_reference_is_kept_in_the_stored_tree():
     document = Document("{ number: ${NUM} }")
     stored = document.stored_value(document.root)
     assert stored["number"] == TemplateRef("NUM", None)
+
+# --------------------------------------------------------------------------
+# quoted placeholders with a non-string conversion (regression)
+# --------------------------------------------------------------------------
+
+
+def test_quoted_placeholder_is_converted_to_a_number():
+    """A quoted placeholder resolves and converts exactly like the unquoted one."""
+    effective, issues = resolve('{ number: "${NUM}" }', environ={"NUM": "42"})
+    assert effective["number"] == 42 and isinstance(effective["number"], int)
+    assert not [issue for issue in issues if issue.severity == "error"]
+
+
+def test_quoted_placeholder_conversion_reports_a_non_number():
+    _, issues = resolve('{ number: "${NUM}" }', environ={"NUM": "abc"})
+    assert any(issue.rule == "env_conversion" for issue in issues)
+
+
+def test_quoted_placeholder_is_converted_to_a_bool():
+    effective, issues = resolve('{ flag: "${FLAG}" }', environ={"FLAG": "true"})
+    assert effective["flag"] is True
+    assert not [issue for issue in issues if issue.severity == "error"]
+
+
+def test_quoted_placeholder_uses_the_inline_default_for_conversion():
+    effective, issues = resolve('{ number: "${NUM:-7}" }')
+    assert effective["number"] == 7
+    assert not [issue for issue in issues if issue.severity == "error"]
+
+
+# --------------------------------------------------------------------------
+# a union as the type of an object member (regression)
+# --------------------------------------------------------------------------
+
+UNION_DESCRIPTOR = """
+{
+  descriptor_version: "1.0",
+  root: {
+    type: "object",
+    children: {
+      items: {
+        type: "object",
+        additional_children: {
+          type: "union",
+          children_options: [
+            { type: "object", children: { enabled: { type: "bool" } } },
+            {
+              type: "object",
+              children: {
+                label: { type: "string", env: { allowed: true, convert: "string" } },
+                port: { type: "int", env: { allowed: true, convert: "int" } },
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
+}
+"""
+
+
+def resolve_union(config_text: str, **kwargs):
+    """Effective value plus every error a service would report for it."""
+    descriptor = compile_descriptor(UNION_DESCRIPTOR, strict=True)
+    document = Document(config_text)
+    stored = document.stored_value(document.root)
+    resolver = Resolver(
+        overrides=kwargs.get("overrides", {}),
+        dotenv=kwargs.get("dotenv", {}),
+        environ=kwargs.get("environ", {}),
+    )
+    effective, issues = build_effective(stored, descriptor.root, resolver)
+    if not [issue for issue in issues if issue.severity == "error"]:
+        issues = list(issues) + validate_document(effective, descriptor.root)
+    return effective, issues
+
+
+def test_unquoted_placeholder_below_a_union_member_is_resolved():
+    """Regression: this used to be reported as env_not_allowed and broke the load."""
+    effective, issues = resolve_union("{ items: { a: { port: ${PORT} } } }", environ={"PORT": "9"})
+    assert effective["items"]["a"]["port"] == 9
+    assert not [issue for issue in issues if issue.severity == "error"]
+
+
+def test_quoted_placeholder_below_a_union_member_is_resolved():
+    effective, issues = resolve_union('{ items: { a: { port: "${PORT}" } } }', environ={"PORT": "9"})
+    assert effective["items"]["a"]["port"] == 9
+    assert not [issue for issue in issues if issue.severity == "error"]
+
+
+def test_union_member_picks_the_alternative_that_fits_the_value():
+    """A string member is resolved by the alternative that declares it as a string."""
+    effective, issues = resolve_union('{ items: { a: { label: "${NAME}" } } }', environ={"NAME": "x"})
+    assert effective["items"]["a"]["label"] == "x"
+    assert not [issue for issue in issues if issue.severity == "error"]
+
+
+def test_union_member_validation_is_still_authoritative():
+    """Resolution picks a node; validation still accepts only a fitting alternative."""
+    _, issues = resolve_union("{ items: { a: { port: 'not a number' } } }")
+    assert [issue for issue in issues if issue.severity == "error"]
+
+
+# --------------------------------------------------------------------------
+# heterogeneous arrays: alternatives are resolved positionally
+# --------------------------------------------------------------------------
+
+HETEROGENEOUS_DESCRIPTOR = """
+{
+  descriptor_version: "1.0",
+  root: {
+    type: "object",
+    children: {
+      steps: {
+        type: "array",
+        description: "One alternative per position",
+        children_options: [
+          { type: "object", children: { op: { type: "string" } } },
+          { type: "object", children: { url: { type: "string", env: { allowed: true, convert: "string" } } } },
+          { type: "int" },
+        ],
+      },
+    },
+  },
+}
+"""
+
+
+def _resolve_heterogeneous(config_text: str, **kwargs):
+    descriptor = compile_descriptor(HETEROGENEOUS_DESCRIPTOR, strict=True)
+    document = Document(config_text)
+    stored = document.stored_value(document.root)
+    resolver = Resolver(
+        overrides=kwargs.get("overrides", {}),
+        dotenv=kwargs.get("dotenv", {}),
+        environ=kwargs.get("environ", {}),
+    )
+    return build_effective(stored, descriptor.root, resolver)
+
+
+def test_heterogeneous_array_resolves_each_item_with_its_own_alternative():
+    effective, issues = _resolve_heterogeneous(
+        '{ steps: [ { op: "run" }, { url: "${URL}" }, 3 ] }', environ={"URL": "http://x"}
+    )
+    assert effective["steps"] == [{"op": "run"}, {"url": "http://x"}, 3]
+    assert not [issue for issue in issues if issue.severity == "error"]
+
+
+def test_heterogeneous_array_item_beyond_the_last_alternative_uses_the_last_one():
+    effective, _issues = _resolve_heterogeneous("{ steps: [ { op: 'a' }, 1, 2, 3 ] }")
+    assert effective["steps"] == [{"op": "a"}, 1, 2, 3]
+
+
+def test_heterogeneous_array_validation_accepts_any_alternative():
+    """Positional resolution is a hint; validation still accepts every shape."""
+    _value, issues = _resolve_heterogeneous("{ steps: [ { op: 'a' }, { url: 'u' }, 3 ] }")
+    assert not [issue for issue in issues if issue.severity == "error"]
+
+
+def test_descriptor_node_lookup_and_the_resolver_agree_on_the_item_alternative():
+    from aiset.descriptor import node_at
+
+    descriptor = compile_descriptor(HETEROGENEOUS_DESCRIPTOR, strict=True)
+    assert node_at(descriptor, "/steps/0").type == "object"
+    assert node_at(descriptor, "/steps/2").type == "int"
+    # A shorter list of alternatives than items keeps resolving, never indexing out.
+    assert node_at(descriptor, "/steps/5").type == "int"

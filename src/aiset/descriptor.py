@@ -17,8 +17,14 @@ from .errors import DescriptorError, InvalidDescriptor
 from .jsonsrc import Document
 
 DESCRIPTOR_VERSION = "1.0"
-PRIMITIVE_TYPES = ("string", "int", "number", "bool", "null", "object", "array", "union")
-SCALAR_TYPES = ("string", "int", "number", "bool", "null")
+PRIMITIVE_TYPES = (
+    "string", "int", "number", "bool", "null", "object", "array", "union", "any",
+)
+SCALAR_TYPES = ("string", "int", "number", "bool", "null", "any")
+# `any` accepts every JSON value, so it carries no constraint of its own and is
+# never part of the "this key does not apply to this type" check: a host that
+# reaches for it has decided that the value is opaque, and the limits of
+# validator.check_limits still apply to its depth, size and nesting.
 APPLY_VALUES = ("live", "reload", "restart")
 CONVERT_VALUES = ("string", "int", "number", "bool")
 HOOK_EVENTS = ("before_create", "before_update", "after_create", "after_update")
@@ -113,6 +119,7 @@ CONSTRAINT_BY_TYPE = {
     "int": ("minimum", "maximum"),
     "number": ("minimum", "maximum"),
     "array": ("min_items", "max_items", "unique_items"),
+    "any": (),
 }
 
 UNKNOWN_PROPERTY = "UNKNOWN_DESCRIPTOR_PROPERTY"
@@ -338,8 +345,43 @@ def validate_descriptor(
         for issue in issues:
             if issue.code == UNKNOWN_PROPERTY:
                 issue.severity = "error"
+    _locate_issues(source, issues)
     valid = not any(issue.severity == "error" for issue in issues)
     return Diagnostic(valid=valid, issues=issues)
+
+
+def _locate_issues(source: str, issues: list[Issue]) -> None:
+    """Attach the source position of every issue that carries only a path.
+
+    The descriptor is a JSON5 document and an issue path is a JSON Pointer into
+    it, so the position is read from the same parser the editor uses. A path
+    that names a property which is not there (`/type is required`) is reported
+    at the nearest existing ancestor, which is where the author has to look.
+    """
+    try:
+        document = Document(source, origin="descriptor.json5")
+    except Exception:  # pragma: no cover - the syntax issue already reported it
+        return
+    for issue in issues:
+        if issue.line is not None:
+            continue
+        pointer = issue.path
+        while True:
+            node = _find_or_none(document, pointer)
+            if node is not None:
+                issue.line, issue.column = document.line_col(node.start)
+                break
+            if not pointer:
+                break
+            pointer = pointer.rpartition("/")[0]
+
+
+def _find_or_none(document: Document, pointer: str) -> Any:
+    """`Document.find` that reports a malformed pointer as "not found"."""
+    try:
+        return document.find(pointer)
+    except Exception:
+        return None
 
 
 def _check_envelope(data: dict[str, Any], issues: list[Issue]) -> None:
@@ -1111,13 +1153,21 @@ def build_node(raw: dict[str, Any], path: str, *, parent: Node | None, templates
 
 
 def node_at(descriptor: "CompiledDescriptor | Node", pointer: str) -> Node | None:
-    """Resolve a descriptor node by JSON Pointer over the compiled tree."""
+    """Resolve a descriptor node by JSON Pointer over the compiled tree.
+
+    A member whose type is a `union` resolves through the alternatives, the
+    same way the resolver does: the first alternative that declares the key.
+    Without this, any edit below a union member was refused as an undeclared
+    path even though the very same value loaded and validated.
+    """
     from .pointer import parse_pointer
 
     node = descriptor.root if isinstance(descriptor, CompiledDescriptor) else descriptor
     for token in parse_pointer(pointer):
         if node.type == "object":
             child = node.children.get(token) if node.children else None
+            if child is None:
+                child = _union_child_node(node, token)
             if child is None:
                 if node.additional_children is None:
                     return None
@@ -1131,9 +1181,23 @@ def node_at(descriptor: "CompiledDescriptor | Node", pointer: str) -> Node | Non
             node = _array_item_node(node, token)
             if node is None:
                 return None
+        elif node.type == "union":
+            # Only a key can address a union reached this way: an array item of
+            # union type was already resolved by the array branch above.
+            node = _union_child_node(node, token)
+            if node is None:
+                return None
         else:
             return None
     return node
+
+
+def _union_child_node(node: Node, token: str) -> Node | None:
+    """One member of an object typed as a union, resolved by declaration order."""
+    for option in node.option_nodes or ():
+        if option.type == "object" and token in (option.children or {}):
+            return option.children[token]
+    return None
 
 
 def _array_item_node(node: Node, token: str) -> Node | None:
