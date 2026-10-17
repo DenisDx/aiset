@@ -43,6 +43,7 @@ service.get(document_id, path, *, view="source", principal) -> GetResult
 service.validate(document_id, path, value_text, *,
                  expected_revision, expected_descriptor_revision,
                  principal) -> ValidateResult
+service.validate_document(document_id, source, *, principal) -> ValidateResult
 service.set(document_id, path, value_text, *,
             expected_revision, expected_descriptor_revision,
             principal) -> SetResult
@@ -60,6 +61,8 @@ Argument rules:
 - `view`: `"source"` | `"effective"` for `get`; `"authorized"` | `"raw"` for
   `descriptor`.
 - `value_text`: string containing exactly one JSON5 value or template value.
+- `source`: a whole candidate document for `validate_document`, which writes
+  nothing and does not consult the LKG path.
 - `expected_revision`, `expected_descriptor_revision`: opaque strings, required
   for `validate` and `set`.
 - `principal`: required for anything that reads or writes; it is `None` only
@@ -289,14 +292,21 @@ Set:
     "state": "restart_required",
     "active_revision": "previous-active-revision"
   },
-  "hook_results": []
+  "hook_results": [],
+  "commit_report": {
+    "document": "main", "committed": true,
+    "revision": "new-source-revision", "uncertain": false, "detail": ""
+  }
 }
 ```
 
 Application states: `applied`, `reload_required`, `restart_required`,
-`apply_failed`. A missing host application callback cannot report `applied`. A
-committed write whose callback fails returns `stored: true` with `apply_failed`
-and an explicit application error, never a generic write failure.
+`apply_failed`. The state comes from the most restrictive `apply` policy of the
+changed paths; a missing application callback does not by itself force reload or
+restart. A committed write whose callback fails returns `stored: true` with
+`apply_failed` and an explicit application error, never a generic write failure.
+`commit_report` carries the store's explicit commit state (SPEC_.md 7.3),
+including `uncertain` for a result that needs a re-read.
 
 ## 10. HTTP routes
 
@@ -304,16 +314,26 @@ and an explicit application error, never a generic write failure.
 
 | Method | Route | Operation |
 |---|---|---|
+| GET | `{base}/health` | liveness probe |
 | GET | `{base}/descriptor?document=&view=authorized` | `descriptor` |
 | GET | `{base}/value?document=&path=&view=source` | `get` |
+| GET | `{base}/tree?document=&path=&view=source` | `tree` (section 19) |
+| GET | `{base}/documents` | registered document ids |
 | POST | `{base}/validate` | `validate` |
 | POST | `{base}/value` | `set` |
-| POST | `{base}/load` | `load` |
-| POST | `{base}/load/lkg` | `load_lkg` |
-| GET | `{base}/tree?document=&path=&view=source` | `tree` (section 19) |
+| POST | `{base}/document/validate` | `validate_document` (read-only candidate) |
 | POST | `{base}/operations/validate` | `apply_operations(dry_run=True)` (section 20) |
 | POST | `{base}/operations` | `apply_operations` (section 20) |
+| POST | `{base}/env` | `env_status` (presence only) |
+| POST | `{base}/load` | `load` |
+| POST | `{base}/load/lkg` | `load_lkg` |
 | POST | `{base}/descriptor/validate` | `validate_descriptor` (development) |
+| POST | `{base}/merge` | `merge` (section 14) |
+
+The bundled editor assets are served at `{base}/assets/<name>` and, for hosts
+that mount the assets separately, at `/assets/<name>`. `POST
+{base}/document/validate` takes `{"document", "source"}` and validates a whole
+candidate document without writing or reading the live file.
 
 `POST` body for `validate` and `set`:
 
@@ -641,10 +661,12 @@ Each node carries:
 | `origin` | `file`, `environment` (with `variable`), `default`, or `absent` |
 | `default_applied` | `true` when an effective default is shown |
 | `type`, `apply`, `field` | Descriptor metadata; `field` is the authorized node description |
+| `matched_option` | Index into `children_options` of the `union` alternative the stored value validated against; absent when none matches |
 | `access_denied` | `true` for a secret node the principal may not read; its values are omitted, never redacted |
-| `kind` | `object`, `dynamic_key`, `array_item`, `leaf`, or `undeclared` |
-| `capabilities` | `edit`, `add`, `remove`, `reorder`, `add_child`, `remove_child`, `key_options`, `key_pattern` |
-| `kind` | `array`, `array_item`, `object`, `dynamic_key`, `leaf` or `undeclared` |
+| `kind` | `array`, `array_item`, `object`, `dynamic_key`, `leaf`, or `undeclared` (decided by the parent) |
+| `capabilities` | `edit`, `add`, `remove`, `reorder`, `add_child`, `remove_child`, `key_options`, `key_pattern`; `unsupported` names a recognized-but-unexecuted capability (for example `hooks`), in which case every action is false |
+| `children`, `items` | Recursive nodes for objects and arrays |
+| `additional_child` | Field description of dynamic values, used to create a property |
 | `comments` | Comments of the source file that introduce the node, markers removed; decorative section rules are dropped |
 | `template` | `name` and inline `default` of a stored `${VAR}` / `${VAR:-default}`; absent for a plain value |
 
@@ -659,8 +681,6 @@ source comments first, then the descriptor description, the flags (`required`,
 conversion, the default, the constraints and the value as written. A node whose
 `field.default` is declared also gets a small button that stages that default;
 the button is disabled while the stored value already is the default.
-| `children`, `items` | Recursive nodes for objects and arrays |
-| `additional_child` | Field description of dynamic values, used to create a property |
 
 The snapshot is consistent with one source and one descriptor revision; a
 secret subtree is reported as `access_denied` without values, while the

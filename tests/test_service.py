@@ -342,6 +342,42 @@ def test_hooks_are_rejected_with_an_unsupported_capability(tmp_path, principal):
                     expected_descriptor_revision=loaded.descriptor_revision, principal=principal)
 
 
+def test_tree_marks_a_hook_bound_subtree_unsupported(tmp_path, principal):
+    descriptor = DEMO_DESCRIPTOR.replace(
+        "      enabled: {",
+        """      guarded: {
+        type: "object",
+        hooks: { before_update: [ { tag: "check", scope: "node" } ] },
+        children: { value: { type: "int" } },
+      },
+      enabled: {""",
+    )
+    config = DEMO_CONFIG.replace("  enabled: true,", "  guarded: { value: 1 },\n  enabled: true,")
+    path = copy_config(tmp_path, config)
+    service = Service()
+    service.register("demo", path, descriptor, resolver=Resolver(environ={}, dotenv={}, overrides={}))
+    service.load("demo", principal=principal)
+
+    def walk(node):
+        yield node
+        for child in node.get("children", []) + node.get("items", []):
+            yield from walk(child)
+
+    nodes = {node["path"]: node for node in walk(service.tree("demo", principal=principal)["node"])}
+    assert nodes["/guarded"]["capabilities"]["unsupported"] == "hooks"
+    assert nodes["/guarded"]["capabilities"]["edit"] is False
+    # A change below the binding is refused too, so the descendant reports it.
+    assert nodes["/guarded/value"]["capabilities"]["unsupported"] == "hooks"
+
+
+def test_set_reports_the_commit_report(service, principal, revisions):
+    source, descriptor = revisions
+    result = service.set("demo", "/enabled", "false", expected_revision=source,
+                         expected_descriptor_revision=descriptor, principal=principal)
+    assert result.commit_report["committed"] is True
+    assert result.to_dict()["commit_report"]["revision"] == result.revision
+
+
 def test_probe_changes_can_reject_a_save(demo_dir, service, principal, revisions):
     source, descriptor = revisions
     service.on_probe_changes(lambda before, after, paths: Rejection(

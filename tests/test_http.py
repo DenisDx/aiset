@@ -10,6 +10,7 @@ import pytest
 
 from aiset.httpd import create_app
 from aiset.service import Principal
+from tests.conftest import DEMO_CONFIG
 
 
 class Client:
@@ -18,7 +19,7 @@ class Client:
     def __init__(self, app) -> None:
         self.app = app
 
-    def request(self, method: str, path: str, body: dict | None = None, query: str = "") -> tuple[int, dict]:
+    def raw(self, method: str, path: str, body: dict | None = None, query: str = "") -> tuple[int, dict, bytes]:
         raw = json.dumps(body).encode("utf-8") if body is not None else b""
         environ = {
             "REQUEST_METHOD": method,
@@ -31,11 +32,14 @@ class Client:
 
         def start_response(status, headers):
             captured["status"] = int(status.split()[0])
-            captured["headers"] = headers
+            captured["headers"] = dict(headers)
 
         chunks = self.app(environ, start_response)
-        payload = b"".join(chunks)
-        return captured["status"], json.loads(payload) if payload else {}
+        return captured["status"], captured["headers"], b"".join(chunks)
+
+    def request(self, method: str, path: str, body: dict | None = None, query: str = "") -> tuple[int, dict]:
+        status, _, payload = self.raw(method, path, body=body, query=query)
+        return status, json.loads(payload) if payload else {}
 
     def get(self, path, query=""):
         return self.request("GET", path, query=query)
@@ -57,6 +61,30 @@ def revision_pair(service, principal):
 def test_health(client):
     status, payload = client.get("/api/health")
     assert status == 200 and payload["ok"]
+
+
+def test_assets_are_served_under_the_mount_prefix(client):
+    """A host that mounts only the API still gets the editor assets."""
+    status, headers, body = client.raw("GET", "/api/settings/assets/aiset.css")
+    assert status == 200
+    assert headers["Cache-Control"] == "no-cache, must-revalidate"
+    assert body
+    # The application-root path stays for hosts that mount the assets separately.
+    root_status, _, _ = client.raw("GET", "/assets/aiset.css")
+    assert root_status == 200
+
+
+def test_document_validate_route(client):
+    status, payload = client.post(
+        "/api/settings/document/validate", {"document": "demo", "source": DEMO_CONFIG}
+    )
+    assert status == 200 and payload["valid"] is True
+
+    status, payload = client.post(
+        "/api/settings/document/validate", {"document": "demo", "source": "{ not_declared: 1 }"}
+    )
+    assert status == 200 and payload["valid"] is False
+    assert any(issue["path"] == "/not_declared" for issue in payload["issues"])
 
 
 def test_list_documents(client):

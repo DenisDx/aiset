@@ -109,6 +109,7 @@
     this.hiddenTemplate = {};
     this.keyDrafts = {};
     this._addSeq = 0;
+    this.unionShape = {};
     this._envNames = {};
     this.handlers = {};
     this.busy = false;
@@ -268,6 +269,7 @@
         self.descriptorRevision = tree.descriptor_revision;
         self._expandDefault();
         self.hiddenTemplate = {};
+        self.unionShape = {};
         self._render();
         self._setStatus("ok", "Loaded revision " + String(tree.revision).slice(0, 12) +
           (tree.invalid_on_disk ? " — invalid on disk, showing the last valid state" : ""));
@@ -413,7 +415,7 @@
         if (parentPath) { self.expanded[parentPath] = true; }
       }
     });
-    if (!operations || !operations.length) { this.pending = []; }
+    if (!operations || !operations.length) { this.pending = []; this.unionShape = {}; }
     this._renderPending();
     this._render();
     this._emit("staged", this.getPendingOperations());
@@ -430,6 +432,9 @@
     });
     delete this.hiddenTemplate[path];
     delete this.envDraft[path];
+    /* A union the user re-shaped goes back to the alternative its stored value
+     * matched; otherwise the row would keep the abandoned shape. */
+    delete this.unionShape[path];
     this._renderPending();
     this._render();
   };
@@ -889,6 +894,13 @@
     if (node.exists === false) { wrap.appendChild(badge(node.default_applied ? "default" : "absent", "absent")); }
     if (node.field && node.field.read_only) { wrap.appendChild(badge("read-only", "lock")); }
     if (node.access_denied) { wrap.appendChild(badge("secret", "lock")); }
+    if ((node.capabilities || {}).unsupported) {
+      wrap.appendChild(element("span", {
+        class: "aiset-tree-badge unsupported",
+        text: "unsupported",
+        title: "Descriptor lifecycle hooks are recognized but not executed by this build; writes here are refused."
+      }));
+    }
     if (node.field && node.field.required) { wrap.appendChild(badge("required", "req")); }
     if (node.field && node.field.nullable) { wrap.appendChild(badge("nullable", "req")); }
     if (this._pendingFor(node.path)) { wrap.appendChild(badge("dirty", "dirty")); }
@@ -949,6 +961,9 @@
     if (this.rawMode[node.path]) { return null; }
     if (this._showsTemplate(node)) { return this._templateControl(node); }
 
+    if (node.type === "union" && field.children_options && field.children_options.length) {
+      return this._unionControl(node);
+    }
     var wrap = element("span", { class: "aiset-tree-value" });
     var current = this._plainValueText(node);
     /* An unchecked box cannot say whether a bool is stored or false. */
@@ -958,10 +973,48 @@
     if (field.nullable && node.type !== "object") {
       wrap.appendChild(this._nullToggle(node, control));
     }
-    if (node.type === "union" && field.children_options) {
-      wrap.appendChild(this._typeChooser(node));
-    }
     return wrap;
+  };
+
+  /* A union is edited through the control of the alternative the value matches:
+   * an enum string becomes a select, an int a number field, an object stays the
+   * raw source. The shape chooser switches the alternative. */
+  TreeEditor.prototype._unionControl = function (node) {
+    var self = this;
+    var options = (node.field && node.field.children_options) || [];
+    var wrap = element("span", { class: "aiset-tree-value aiset-tree-union" });
+    var active = this._unionActive(node, options);
+    var control = null;
+    if (active >= 0) {
+      var option = options[active];
+      var optNode = Object.assign({}, node, { type: option.type, field: option });
+      control = this._typedControl(optNode, this._plainValueText(node),
+        function (staged) { self._stage(node, staged); });
+      wrap.appendChild(control);
+    }
+    if ((node.field || {}).nullable) { wrap.appendChild(this._nullToggle(node, control || wrap)); }
+    wrap.appendChild(this._typeChooser(node, options));
+    return wrap;
+  };
+
+  /* The alternative a union node is currently shown as: the shape the user
+   * picked, else the alternative the stored value matched (snapshot field). */
+  TreeEditor.prototype._unionActive = function (node, options) {
+    var chosen = this.unionShape[node.path];
+    if (typeof chosen === "number" && chosen >= 0 && chosen < options.length) { return chosen; }
+    if (typeof node.matched_option === "number" &&
+        node.matched_option >= 0 && node.matched_option < options.length) {
+      return node.matched_option;
+    }
+    return -1;
+  };
+
+  TreeEditor.prototype._sampleForOption = function (option) {
+    if (option.enum && option.enum.length) { return JSON.stringify(option.enum[0]); }
+    if (option.const !== undefined) { return JSON.stringify(option.const); }
+    var samples = { string: '""', int: "0", number: "0", bool: "false", null: "null",
+                    array: "[]", object: "{}" };
+    return samples[option.type] || "null";
   };
 
   /* One control per declared type. The callback receives the text to stage and
@@ -1339,18 +1392,21 @@
     });
   };
 
-  TreeEditor.prototype._typeChooser = function (node) {
+  TreeEditor.prototype._typeChooser = function (node, options) {
     var self = this;
+    options = options || (node.field && node.field.children_options) || [];
     var select = element("select", { "aria-label": "Value shape for " + node.path, class: "aiset-tree-shape" });
     select.appendChild(element("option", { value: "", text: "shape…" }));
-    (node.field.children_options || []).forEach(function (option) {
-      select.appendChild(element("option", { value: option.type, text: option.type }));
+    options.forEach(function (option, index) {
+      select.appendChild(element("option", { value: String(index), text: option.type }));
     });
     select.addEventListener("change", function () {
-      if (!select.value) { return; }
-      var sample = { string: '""', int: "0", number: "0", bool: "false", null: "null",
-                     array: "[]", object: "{}", union: "{}" };
-      self._stage(node, sample[select.value] || "null");
+      if (select.value === "") { return; }
+      var index = Number(select.value);
+      var option = options[index];
+      if (!option) { return; }
+      self.unionShape[node.path] = index;
+      self._stage(node, self._sampleForOption(option));
       select.value = "";
     });
     return select;
@@ -1458,8 +1514,10 @@
     } else if (caps.add) {
       wrap.appendChild(this._addItemControl(node));
     }
-    if (caps.remove && (node.kind === "array_item" || node.type === "array")) {
-      wrap.appendChild(this._button("remove", node.type === "array" ? "Remove this list" : "Remove this item", "trash", function () {
+    if (caps.remove) {
+      var removeTitle = node.type === "array" ? "Remove this list"
+        : node.kind === "array_item" ? "Remove this item" : "Remove this entry";
+      wrap.appendChild(this._button("remove", removeTitle, "trash", function () {
         self.stageOperations([{ op: "remove", path: node.path }], "user");
       }));
       if (caps.reorder) {
@@ -1467,7 +1525,7 @@
         wrap.appendChild(this._button("down", "Move down", "arrow-down", function () { self._move(node, 1); }));
       }
     }
-    if (caps.remove_child && node.type === "object") {
+    if (caps.add_child && node.type === "object") {
       var addProperty = this._addPropertyControl(node);
       if (addProperty) { wrap.appendChild(addProperty); }
     }

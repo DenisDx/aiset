@@ -270,6 +270,7 @@ class SetResult:
     hook_results: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     issues: list[ValueIssue] = dataclasses.field(default_factory=list)
     detail: str = ""
+    commit_report: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -290,6 +291,8 @@ class SetResult:
             out["issues"] = [issue.to_dict() for issue in self.issues]
         if self.detail:
             out["detail"] = self.detail
+        if self.commit_report is not None:
+            out["commit_report"] = self.commit_report
         return out
 
 
@@ -534,6 +537,43 @@ class Service:
             descriptor_revision=state.registration.descriptor.revision,
         )
 
+    def validate_document(
+        self, document_id: str, source: str, *, principal: Principal
+    ) -> ValidateResult:
+        """Validate a candidate document source against its descriptor.
+
+        The candidate is a whole document (for example a file a host wants to
+        ship). Nothing is written, no state changes, and the LKG path is not
+        consulted: the caller gets the issues the file would produce.
+        """
+        self._require(principal, "settings_validate")
+        registration = self._registration(document_id)
+        try:
+            _, revision, _ = registration.store.read()
+        except AisetError:
+            revision = ""
+        try:
+            candidate = Document(source, origin=registration.store.path.name)
+            stored = candidate.stored_value(candidate.root)
+        except AisetError as exc:
+            return ValidateResult(
+                document=document_id,
+                valid=False,
+                preservable=True,
+                issues=[ValueIssue("", "parse", str(exc))],
+                revision=revision,
+                descriptor_revision=registration.descriptor.revision,
+            )
+        issues = self._validate_stored(registration, stored, candidate)
+        return ValidateResult(
+            document=document_id,
+            valid=not any(issue.severity == "error" for issue in issues),
+            preservable=True,
+            issues=issues,
+            revision=revision,
+            descriptor_revision=registration.descriptor.revision,
+        )
+
     def set(
         self,
         document_id: str,
@@ -592,6 +632,7 @@ class Service:
             application_state=application_state,
             active_revision=new_state.active_revision,
             changed_paths=changed_paths,
+            commit_report=report.to_dict(),
         )
 
     def descriptor(
@@ -751,6 +792,7 @@ class Service:
         result.active_revision = new_state.active_revision
         result.changed_paths = changed_paths
         result.revision = new_state.revision
+        result.commit_report = report.to_dict()
         return result
 
     def _apply_to_candidate(
@@ -1456,6 +1498,7 @@ class OperationsResult:
     active_revision: str | None = None
     changed_paths: list[str] = dataclasses.field(default_factory=list)
     dry_run: bool = False
+    commit_report: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -1475,6 +1518,8 @@ class OperationsResult:
                 "active_revision": self.active_revision,
             }
             out["changed_paths"] = list(self.changed_paths)
+        if self.commit_report is not None:
+            out["commit_report"] = self.commit_report
         return out
 
 

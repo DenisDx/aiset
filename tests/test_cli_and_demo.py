@@ -188,6 +188,58 @@ def test_cli_invalid_descriptor_returns_1(capsys, tmp_path):
     assert main(["validate-descriptor", str(path)]) == 1
 
 
+def _document_files(tmp_path, config_text):
+    config = tmp_path / "config.json5"
+    config.write_text(config_text, encoding="utf-8")
+    descriptor = tmp_path / "descriptor.json5"
+    descriptor.write_text(DEMO_DESCRIPTOR, encoding="utf-8")
+    return config, descriptor
+
+
+def test_cli_validates_a_document(capsys, tmp_path):
+    config, descriptor = _document_files(tmp_path, DEMO_CONFIG)
+    code = main(["validate-document", "--config", str(config), "--descriptor", str(descriptor)])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0 and payload["valid"] is True
+
+
+def test_cli_document_reports_an_undeclared_key(capsys, tmp_path):
+    config, descriptor = _document_files(tmp_path, "{ not_declared: 1 }")
+    code = main([
+        "validate-document", "--config", str(config), "--descriptor", str(descriptor), "--format", "text",
+    ])
+    out = capsys.readouterr().out
+    assert code == 1 and out.startswith("valid: False")
+    assert "not_declared" in out
+
+
+def test_cli_document_missing_file_returns_2(capsys, tmp_path):
+    _config, descriptor = _document_files(tmp_path, DEMO_CONFIG)
+    code = main([
+        "validate-document", "--config", str(tmp_path / "nope.json5"), "--descriptor", str(descriptor),
+    ])
+    assert code == 2
+    assert "cannot read" in capsys.readouterr().err
+
+
+def test_cli_document_resolves_from_an_env_file(capsys, tmp_path):
+    config = tmp_path / "config.json5"
+    config.write_text('{ port: "${MYAPP_PORT:-8080}" }', encoding="utf-8")
+    descriptor = tmp_path / "descriptor.json5"
+    descriptor.write_text(
+        '{ descriptor_version: "1.0", root: { type: "object", children: '
+        '{ port: { type: "int", env: { allowed: true, convert: "int" } } } } }',
+        encoding="utf-8",
+    )
+    env = tmp_path / ".env"
+    env.write_text("MYAPP_PORT=9999\n", encoding="utf-8")
+    code = main([
+        "validate-document", "--config", str(config), "--descriptor", str(descriptor),
+        "--env", str(env), "--quiet",
+    ])
+    assert code == 0
+
+
 # -- demo application ------------------------------------------------------
 
 

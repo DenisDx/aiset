@@ -121,12 +121,18 @@ def _build_dispatcher(
             if path == "/api/health" or path == f"{base}/health":
                 return _json(start_response, 200, {"ok": True, "aiset": __version__})
             if path.startswith(base):
+                route = path[len(base) :] or "/"
+                # The bundled editor assets are served under the mount prefix as
+                # well as at the application root, so a host that mounts only the
+                # API at `base` still gets the editor without a second mount.
+                if route.startswith("/assets/"):
+                    return _static(start_response, static_root, route, asset_root, static_map or {})
                 return _handle_api(
                     service,
                     request,
                     start_response,
                     method,
-                    path[len(base) :] or "/",
+                    route,
                     resolve_principal(request),
                 )
             if static_root is not None or path.startswith("/assets/"):
@@ -212,6 +218,14 @@ def _handle_api(
             expected_descriptor_revision=payload.get("expected_descriptor_revision"),
             principal=principal,
         )
+        return _json(start_response, 200, result.to_dict())
+
+    if method == "POST" and route == "/document/validate":
+        payload = _body(request, service)
+        source = payload.get("source")
+        if not isinstance(source, str):
+            raise BadRequest("'source' must be a string")
+        result = service.validate_document(_one(payload, "document"), source, principal=principal)
         return _json(start_response, 200, result.to_dict())
 
     if method == "POST" and route == "/value":

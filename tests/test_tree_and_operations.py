@@ -67,6 +67,13 @@ def test_tree_carries_field_metadata_and_capabilities(service, principal):
     assert node["origin"] == {"kind": "file"}
 
 
+def test_tree_reports_the_matched_union_alternative(service, principal):
+    """A union member says which alternative the stored value was validated as."""
+    node = service.tree("demo", "/log_level", principal=principal)["node"]
+    assert node["type"] == "union"
+    assert node["matched_option"] == 1  # "info" matches the string alternative
+
+
 def test_tree_carries_the_shape_of_an_array(service, principal):
     """A client must know what a new entry of an array looks like."""
     tree = service.tree("demo", "/empty_list", principal=principal)
@@ -308,6 +315,34 @@ def test_remove_inline_array_item_is_clean():
     document = Document("{\n  list: [\"a\", \"b\", \"c\"],\n}\n")
     after = document.apply_remove("/list/1")
     assert Document(after).stored_value(Document(after).root)["list"] == ["a", "c"]
+
+
+def test_remove_an_entry_of_a_dynamic_object_collection(service, principal):
+    """A dynamic key is addressed by its own path, like an array item."""
+    tree = service.tree("demo", "/literal_keys", principal=principal)
+    nodes = {node["path"]: node for node in _flatten(tree["node"])}
+    assert nodes["/literal_keys"]["capabilities"]["remove"] is False
+    # A scalar dynamic entry keeps its value shape (leaf) but is removable.
+    assert nodes["/literal_keys/dotted.key"]["kind"] == "leaf"
+    assert nodes["/literal_keys/dotted.key"]["capabilities"]["remove"] is True
+
+    apply(service, principal, [{"op": "remove", "path": "/literal_keys/dotted.key"}])
+    loaded = service.load("demo", principal=principal)
+    assert "dotted.key" not in loaded.effective["literal_keys"]
+
+    # Escaped keys keep JSON Pointer escaping.
+    apply(service, principal, [{"op": "remove", "path": "/literal_keys/with~1slash"}])
+    loaded = service.load("demo", principal=principal)
+    assert "with/slash" not in loaded.effective["literal_keys"]
+
+    # An object-valued dynamic entry is a dynamic_key and removable too.
+    sinks = service.tree("demo", "/logging/sinks", principal=principal)
+    sink_nodes = {node["path"]: node for node in _flatten(sinks["node"])}
+    assert sink_nodes["/logging/sinks/main"]["kind"] == "dynamic_key"
+    assert sink_nodes["/logging/sinks/main"]["capabilities"]["remove"] is True
+    apply(service, principal, [{"op": "remove", "path": "/logging/sinks/main"}])
+    loaded = service.load("demo", principal=principal)
+    assert "main" not in loaded.effective["logging"]["sinks"]
 
 
 def test_move_array_item_keeps_comments():

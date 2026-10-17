@@ -14,9 +14,10 @@ from typing import Any, Iterable
 
 from .descriptor import Node
 from .jsonsrc import ArrayNode, ObjectNode, TemplateNode
+from .pointer import unescape_token
 from .resolver import MISSING, effective_at
 from .service import DocumentRegistration, DocumentState
-from .validator import Limits
+from .validator import Limits, ValidationContext, validate_value
 
 _DECORATION = re.compile(r"[-=_*~.\s]+")
 # "// -- section ---" structures the file but explains nothing about a value.
@@ -35,6 +36,7 @@ class Capabilities:
     remove_child: bool = False
     key_options: list[str] = field(default_factory=list)
     key_pattern: str | None = None
+    unsupported: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -49,6 +51,8 @@ class Capabilities:
             out["key_options"] = list(self.key_options)
         if self.key_pattern:
             out["key_pattern"] = self.key_pattern
+        if self.unsupported:
+            out["unsupported"] = self.unsupported
         return out
 
 
@@ -163,6 +167,10 @@ class _TreeBuilder:
             entry["field"] = node.describe()
             entry["apply"] = node.apply
             entry["type"] = node.type
+            if node.type == "union" and stored is not MISSING:
+                matched = _matched_option(stored, node, path, self.limits)
+                if matched is not None:
+                    entry["matched_option"] = matched
         else:
             entry["type"] = "undeclared"
             entry["apply"] = None
@@ -194,6 +202,12 @@ class _TreeBuilder:
         caps = Capabilities()
         if node is None:
             return caps.to_dict()
+        if _hooks_unsupported(self.state.registration, path):
+            # Descriptor hook bindings are recognized but not executed in this
+            # build; a write anywhere in the bound subtree is refused, so the
+            # snapshot reports no capability and a reason (SPEC.md 17/19).
+            caps.unsupported = "hooks"
+            return caps.to_dict()
         parent_path, _, token = _split(path)
         parent_node = _node_at(self.state.registration, parent_path) if parent_path is not None else None
         caps.edit = bool(editable and not denied and not node.read_only)
@@ -220,6 +234,17 @@ class _TreeBuilder:
                 node.additional_children is not None or node.children
             )
             caps.remove_child = not denied and _parent_allows_removal(parent_node, node, token)
+        # An entry of a dynamic object collection is addressed by its own path,
+        # like an array item, so it can be removed directly, whatever its value
+        # type. The container that owns `additional_children` is not an entry.
+        dynamic_entry = (
+            parent_node is not None
+            and parent_node.type == "object"
+            and parent_node.additional_children is not None
+            and (not parent_node.children or unescape_token(token) not in parent_node.children)
+        )
+        if dynamic_entry and not denied and _parent_allows_removal(parent_node, node, token):
+            caps.remove = True
         caps.key_options = list(node.key_enum or [])
         caps.key_pattern = node.key_pattern
         return caps.to_dict()
@@ -322,6 +347,34 @@ def _parent_allows_removal(parent: Node | None, child: Node, token: str) -> bool
     return parent.additional_children is not None
 
 
+def _hooks_unsupported(registration: DocumentRegistration, path: str) -> bool:
+    """True when the node or an ancestor carries descriptor hook bindings.
+
+    Hook bindings are recognized but not executed in this build, and a write
+    anywhere in the bound subtree is refused (SPEC.md 19.2), so the whole subtree
+    is reported as unsupported.
+    """
+    from .pointer import format_pointer, parse_pointer
+
+    tokens = parse_pointer(path)
+    for index in range(len(tokens) + 1):
+        prefix = format_pointer(tokens[:index])
+        node = _node_at(registration, prefix) if prefix else registration.descriptor.root
+        if node is not None and node.hooks:
+            return True
+    return False
+
+
+def _matched_option(value: Any, node: Node, path: str, limits: Limits) -> int | None:
+    """Index of the first `union` alternative a stored value validates against."""
+    if not node.option_nodes:
+        return None
+    for index, option in enumerate(node.option_nodes):
+        if not validate_value(value, option, path, ValidationContext(limits=limits)):
+            return index
+    return None
+
+
 def _kind_of(registration: DocumentRegistration, node: Node | None, path: str) -> str:
     """Shape of one node: an array, one of its items, a dynamic key or a leaf.
 
@@ -332,11 +385,14 @@ def _kind_of(registration: DocumentRegistration, node: Node | None, path: str) -
         return "undeclared"
     if node.type == "array":
         return "array"
-    parent_path, _, _ = _split(path)
+    parent_path, _, token = _split(path)
     parent = _node_at(registration, parent_path) if parent_path else None
     if parent is not None and parent.type == "array":
         return "array_item"
     if node.type == "object":
+        if parent is not None and parent.type == "object" and parent.additional_children is not None:
+            if not parent.children or unescape_token(token) not in parent.children:
+                return "dynamic_key"
         return "dynamic_key" if node.additional_children is not None and not node.children else "object"
     return "leaf"
 

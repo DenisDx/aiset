@@ -98,8 +98,9 @@ from aiset.asgi import create_asgi_app
 app = create_asgi_app(service, base="/api/settings", principal_from_scope=resolve_session)
 ```
 
-`/assets/*` is served from the installed package with or without `static_dir`,
-so an API-only host still gets the editor.
+`/assets/*` (and `{base}/assets/*`) is served from the installed package with or
+without `static_dir`, so a host that mounts only the API at `{base}` still gets
+the editor from the same mount.
 
 Rules for that snippet:
 
@@ -131,6 +132,21 @@ Call order for a host: `register` once at startup, then per request
 `get`/`tree` (read) or `apply_operations` (write). `load` is implicit on first
 use and re-reads after an external change or `POST /load`.
 
+Callback contracts. Arguments are positional and fixed; a callback that cannot
+receive them is refused at registration with `TypeError`. Each may be sync or
+async.
+
+| Registration | Callback receives | When |
+|---|---|---|
+| `on_probe_changes(cb)` | `(previous_stored, new_stored, changed_paths)`; return a `Rejection` to veto | before persistence |
+| `on_application(cb)` | `(previous_effective, new_effective, changed_paths)` | after commit, only for `live`/`reload` changes |
+| `on_after_save(cb)` | `(previous_stored, new_stored, event)`, where `event` is `ChangeEvent.to_dict()` | after commit |
+| `subscribe(document_id, paths, cb, ...)` | `(event)`, where `event` is a `ChangeEvent` object | after commit, when a covered path changed |
+
+`ChangeEvent` fields: `document`, `changed_paths`, `previous_revision`,
+`revision`, `application_state`, `active_revision`. Callbacks run outside the
+lock, are bounded by the callback timeout, and never undo a committed write.
+
 ## 5. Python API
 
 All methods require a `principal`. `expected_revision` and
@@ -145,6 +161,7 @@ previous read returned, or `None` to accept whatever is current.
 | `reread(document_id, *, principal=None)` | `LoadResult` | none | Explicit re-read after an external edit. |
 | `get(document_id, path, *, view="source", principal)` | `GetResult` | `settings_read_source` / `settings_read_effective` | `value_text` is the source fragment; `effective` the resolved value. |
 | `validate(document_id, path, value_text, *, expected_revision, expected_descriptor_revision, principal)` | `ValidateResult` | `settings_validate` | `valid`, `preservable`, `issues`; writes nothing. |
+| `validate_document(document_id, source, *, principal)` | `ValidateResult` | `settings_validate` | Validate a whole candidate document; writes nothing, no LKG. |
 | `set(document_id, path, value_text, *, expected_revision, expected_descriptor_revision, principal)` | `SetResult` | `settings_write` | One path; probes, hooks, callbacks, application. |
 | `tree(document_id, path="", *, view="source", principal)` | `dict` | same as `get` | Snapshot; see section 12. |
 | `apply_operations(document_id, operations, *, expected_revision, expected_descriptor_revision, principal, dry_run=False)` | `OperationsResult` | `settings_validate` / `settings_write` | Atomic batch; see section 13. |
@@ -154,6 +171,11 @@ previous read returned, or `None` to accept whatever is current.
 | `descriptor(document_id, *, view="authorized", principal)` | `dict` | `settings_read_source` | `authorized` hides secret values, `raw` needs `settings_descriptor_raw`. |
 
 Result objects expose `.to_dict()`; the HTTP layer returns exactly that.
+
+`SetResult.application.state` is the host contract: `applied`,
+`reload_required`, `restart_required`, or `apply_failed`, derived from the most
+restrictive `apply` of the changed paths (SPEC_service.md section 4). `live` is
+the only state that advances `active_revision`.
 
 ## 6. HTTP API
 
@@ -172,6 +194,7 @@ owns authentication and must wrap the app.
 | GET | `/documents` | - | `{"ok": true, "documents": [...]}` |
 | POST | `/validate` | `document`, `path`, `value_text`, revisions | `ValidateResult` |
 | POST | `/value` | same | `SetResult` |
+| POST | `/document/validate` | `document`, `source` | `ValidateResult` for a whole candidate |
 | POST | `/operations` | `document`, `operations`, revisions | `OperationsResult` (writes) |
 | POST | `/operations/validate` | same | `OperationsResult` with `dry_run: true` |
 | POST | `/env` | `document`, `names` | `{"ok": true, "present": {...}}` |
@@ -305,6 +328,11 @@ placeholder mode (variable name + typed inline fallback; an empty name stores
 the inline value). A node whose descriptor sets `env.allowed` gets a `.env`
 button that switches it into placeholder mode.
 
+A `union` node is edited through the control of the alternative its value
+matched (`matched_option`): an enum string becomes a select, an `int`/`number` a
+number field, a `bool` a checkbox, a string a text field, an object/array the raw
+source. A `shape…` chooser switches the alternative and stages a sample of it.
+
 Browser rules that are not optional:
 
 - Load the scripts with `defer` in dependency order; touching the DOM before
@@ -364,7 +392,8 @@ no per-node requests, no client-side guessing.
 | `path`, `type`, `kind`, `exists` | Identity. `kind` is `array`, `array_item`, `object`, `dynamic_key`, `leaf`, `undeclared`. |
 | `value_text`, `effective` | Source fragment and resolved value (`view=source` omits `effective`). |
 | `origin` | `file`, `default`, `environment`, `absent`. |
-| `capabilities` | `edit`, `add`, `remove`, `reorder`, `add_child`, `remove_child`, `key_options`, `key_pattern`. |
+| `capabilities` | `edit`, `add`, `remove`, `reorder`, `add_child`, `remove_child`, `key_options`, `key_pattern`; `unsupported` names a recognized-but-unexecuted capability (for example `hooks`) and every action is then false. |
+| `matched_option` | Index into `children_options` of the `union` alternative the stored value validated against; absent when none matches. |
 | `field` | Descriptor metadata: type, description, default, constraints, `env`, `ui`, `nullable`, `required`, `read_only`. |
 | `comments` | Source comments that introduce the node, markers removed, decorative rules dropped. |
 | `template` | `name` and inline `default` of a stored `${VAR}` / `${VAR:-default}`. |
@@ -372,7 +401,13 @@ no per-node requests, no client-side guessing.
 | `default_applied` | Effective view only: the descriptor default is in use. |
 
 `kind` is decided by the parent, not by the node type: a string inside an array
-is an `array_item`, because `remove` and `move` address the item path.
+is an `array_item`, because `remove` and `move` address the item path. A value
+under a dynamic object key is a `dynamic_key` when it is an object, and keeps its
+own shape (for example `leaf` for a scalar) otherwise; both carry `remove`.
+
+`remove` is set for an array, one array item, and an entry of a dynamic object
+collection. `add_child` means the object accepts a new member; `remove_child`
+means this node may be removed from its parent.
 
 ## 13. Operations
 
@@ -387,6 +422,8 @@ is an `array_item`, because `remove` and `move` address the item path.
 - `add` on an array uses the `-` append token; on an object it names a key the
   descriptor permits.
 - `remove` is refused for `required`, `const` and `read_only` nodes.
+- `remove` on an object entry names its key, so a dynamic key (`/obj/some-key`)
+  is deleted the same way an array item is; the entry keeps its comments with it.
 - `move` carries the item with its comments.
 - One batch, one revision, all-or-nothing: the first failure aborts everything
   and the file stays byte-for-byte unchanged.
@@ -402,7 +439,7 @@ is an `array_item`, because `remove` and `move` address the item path.
 | Resolver behaviour | `resolver.py`, `descriptor.py` node_at, `SPEC_.md` correction, `tests/test_resolver.py` |
 | New descriptor property | `descriptor.py` (parse, validate, `describe`), `SPEC.md` correction in `SPEC_.md`, `tests/test_descriptor.py` |
 | New operation | `jsonsrc.py` (source edit), `service.py` (authorize, validate), `SPEC_.md`, `tests/test_tree_and_operations.py` |
-| New snapshot field | `tree.py`, editor rendering, `SPEC_service.md` section 20/21, `tests/test_tree_and_operations.py` |
+| New snapshot field | `tree.py`, editor rendering, `SPEC_service.md` section 19 (snapshot) and 21 (editor), `tests/test_tree_and_operations.py` |
 | Editor behaviour | `src/aiset/assets/aiset-tree.js`, its styles, `tests/test_ui_assets.py` (node smoke with a DOM stub) |
 | New host route | `demo2/app.py`, `demo2/tests/test_app.py`, `commands.md` |
 
@@ -413,10 +450,12 @@ behaviour goes to `IMPLEMENTATION_LOG.md`, decisions with rationale to
 ## 15. Testing an integration
 
 ```sh
-.venv/bin/python -m pytest -q          # whole suite, about 13 seconds
+.venv/bin/python -m pytest -q          # whole suite
 .venv/bin/python -m pytest tests -q    # library only
 .venv/bin/python -m pytest demo2/tests -q
 ./test.sh                              # suite plus descriptor diagnostics
+.venv/bin/aiset validate-descriptor <descriptor.json5> [--strict]
+.venv/bin/aiset validate-document --config <config.json5> --descriptor <descriptor.json5> [--typedef <f>] [--env <f>]
 .venv/bin/python -m pyflakes src/aiset demo2 tests
 node --check src/aiset/assets/aiset-tree.js
 ```

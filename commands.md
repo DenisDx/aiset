@@ -64,6 +64,24 @@ cat examples/descriptor.json5 | .venv/bin/aiset validate-descriptor -
 Exit status is `0` when `valid` is true, `1` when false, `2` on usage or I/O
 error.
 
+## Configuration-vs-descriptor check
+
+Load a real configuration file against its descriptor without starting a
+backend; this is the CI gate for "does my shipped file still load".
+
+```sh
+.venv/bin/aiset validate-document \
+  --config demo2/config.json5 \
+  --descriptor demo2/descriptor.json5 \
+  --typedef demo2/conf2/descriptor.json5 \
+  --env demo2/.env
+.venv/bin/aiset validate-document --config examples/config.json5 \
+  --descriptor examples/descriptor.json5 --format text
+```
+
+`--env` supplies resolution inputs explicitly instead of reading the process
+environment. Exit status is `0` clean, `1` invalid, `2` on usage or I/O error.
+
 ## Manual API checks against a running demo
 
 ```sh
@@ -77,6 +95,9 @@ curl -s -X POST "$BASE/value" -H 'Content-Type: application/json' \
   -d '{"document":"demo","path":"/log_level","value_text":"\"critical\"",
        "expected_revision":"<rev>","expected_descriptor_revision":"<desc-rev>"}'
 curl -s -X POST "$BASE/load/lkg" -H 'Content-Type: application/json' -d '{"document":"demo"}'
+# Validate a whole candidate document (read-only) against the descriptor.
+curl -s -X POST "$BASE/document/validate" -H 'Content-Type: application/json' \
+  -d '{"document":"demo","source":"{ not_declared: 1 }"}'
 ```
 
 ## Runtime state and Git

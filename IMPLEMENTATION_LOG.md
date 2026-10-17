@@ -533,3 +533,43 @@ holds the reproductions and stays the record of what was asked for.
   for the suite: a host-shaped fixture is worth more than a grammar fixture, and
   `proposal_improvement_aidir.md` is now the standing checklist for the next
   host.
+
+- 2026-10-17. Dynamic object entries are deletable. `tree.py` now reports a
+  `kind: "dynamic_key"` and `capabilities.remove: true` for an entry of an open
+  object collection (`additional_children`), for any value type; the container
+  itself stays non-removable. The editor keys its remove control off
+  `capabilities.remove` (label "Remove this entry") and gates the add-property
+  control with `capabilities.add_child` instead of `remove_child`. The service
+  already accepted `remove` on an object key; the gap was capability reporting
+  and the editor. Regression tests cover scalar and object dynamic entries,
+  escaped keys, and the editor button. `AGENT_INTEGRATION.md` documents the
+  callback contracts, the `application.state` contract, and dynamic-key removal;
+  the section references in `DOCUMENTS.MD`, `AGENT_INTEGRATION.md`, and the test
+  count in `TEST.md` were corrected.
+
+- 2026-10-17. Implemented `proposal_improvement2.md` items 1-4 and two of the
+  minor items.
+  - P1: the dispatcher serves `{base}/assets/<name>` as well as `/assets/<name>`
+    on both transports, so a host that mounts only the API still gets the editor.
+  - P2: `aiset validate-document --config --descriptor [--typedef] [--env]
+    [--strict]` loads a real configuration against its descriptor; explicit
+    resolution inputs with `--env`.
+  - P3: `POST {base}/document/validate` and `Service.validate_document` validate
+    a whole candidate document read-only.
+  - P4: a union snapshot node carries `matched_option`, the index of the
+    alternative the stored value validated against.
+  - P5: a node in a hook-bound subtree reports `capabilities.unsupported` and no
+    actions, and the editor badges it; `SetResult`/`OperationsResult` carry
+    `commit_report`. The revision diff remains open.
+  - Tests added in `tests/test_http.py`, `tests/test_asgi.py`,
+    `tests/test_cli_and_demo.py`, `tests/test_tree_and_operations.py`,
+    `tests/test_service.py`. Docs updated in `SPEC_service.md`,
+    `AGENT_INTEGRATION.md`, `commands.md`, and `proposal_improvement2.md`.
+
+- 2026-10-17. Union nodes are edited through the control of the alternative the
+  value matched (`matched_option` from the snapshot): an enum string becomes a
+  `<select>` of its values, `int`/`number` a number field, `bool` a checkbox, a
+  string a text field, and an object/array stays the raw source. The `shape…`
+  chooser now selects by alternative index and remembers the chosen shape per
+  node (`unionShape`), which is cleared on reload. Covered in
+  `tests/test_ui_assets.py`.

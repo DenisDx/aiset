@@ -3,7 +3,7 @@
 ## Automated suite
 
 ```sh
-.venv/bin/python -m pytest          # 310 tests (library + demo2), about ten seconds
+.venv/bin/python -m pytest          # full suite (library + demo2); ./test.sh is the gate
 .venv/bin/python -m pytest tests    # library suite only
 .venv/bin/python -m pytest demo2/tests   # demo2 host and assistant only
 ./test.sh                          # suite plus descriptor diagnostics

@@ -115,8 +115,9 @@ from aiset.asgi import create_asgi_app
 app = create_asgi_app(service, base="/api/settings", principal_from_scope=resolve_session)
 ```
 
-The bundled browser assets under `/assets/` are served either way, with or
-without a `static_dir`.
+The bundled browser assets are served at `{base}/assets/<name>` and at
+`/assets/<name>`, with or without a `static_dir`, so a host that mounts only the
+API still gets the editor.
 
 ## Generated tree editor
 
@@ -197,7 +198,7 @@ aiset/
     merge.py                pure merge(base, update)
     httpd.py                WSGI HTTP adapter and the shared dispatcher
     asgi.py                 ASGI adapter for async hosts
-    cli.py                  `aiset validate-descriptor`
+    cli.py                  `aiset validate-descriptor`, `aiset validate-document`
     assets/                 reusable UI assets (JS + CSS)
   frontend/index.html       demo page using the shipped assets
   examples/                 demo and aiset descriptors/configurations, editing skill

@@ -91,6 +91,19 @@ const TREE = {
         capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
         children: [], items: [],
       }, {
+        /* A union is shown as the control of the alternative the value matched:
+         * a named level is a string with an enum, so the row gets a select. */
+        path: "/server/log_level", type: "union", exists: true, access_denied: false, kind: "leaf",
+        origin: { kind: "file" }, apply: "live", value_text: '"info"', matched_option: 1,
+        field: { type: "union", description: "int 0-7 or a named level",
+                 children_options: [
+                   { type: "int", minimum: 0, maximum: 7 },
+                   { type: "string", enum: ["emergency", "alert", "critical", "error",
+                                            "warning", "notice", "info", "debug"] },
+                 ] },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+        children: [], items: [],
+      }, {
         path: "/server/typed", type: "object", exists: true, access_denied: false, kind: "object",
         origin: { kind: "file" }, apply: "reload", value_text: "{\n  a: 1\n}",
         field: { type: "object", description: "typed element",
@@ -761,6 +774,34 @@ return submitted.then(() => {
          "choosing the stored level again clears dirty");
   assert(stagedFor("/server/env_enum") === undefined, "and leaves nothing staged for it");
 
+  /* A union shows the control of the alternative the value matched: a named
+   * level is an enum string, so the row gets a select. The shape chooser
+   * switches the alternative and stages a sample of it. */
+  first.expandAll();
+  const unionRow = first._renderNode(first._find("/server/log_level"), false);
+  const enumSelect = find(unionRow, (node) =>
+    String(node.tagName).toUpperCase() === "SELECT" && (node.className || "").indexOf("aiset-tree-shape") < 0);
+  assert(enumSelect, "a union whose value matches an enum alternative offers a select");
+  assert(enumSelect.children.some((option) => option.value === '"debug"'),
+         "with the enum values of that alternative");
+  const shapeChooser = find(unionRow, (node) =>
+    String(node.tagName).toUpperCase() === "SELECT" && (node.className || "").indexOf("aiset-tree-shape") >= 0);
+  assert(shapeChooser, "and a shape chooser to switch alternatives");
+  shapeChooser.value = "0";
+  shapeChooser.events.change();
+  assert(first.unionShape["/server/log_level"] === 0, "picking the int shape is remembered");
+  assert(stagedFor("/server/log_level").value_text === "0", "and stages a sample of that shape");
+  first.revert("/server/log_level");
+  assert(first.unionShape["/server/log_level"] === undefined, "revert forgets the abandoned shape");
+  const backRow = first._renderNode(first._find("/server/log_level"), false);
+  assert(find(backRow, (node) =>
+    String(node.tagName).toUpperCase() === "SELECT" && (node.className || "").indexOf("aiset-tree-shape") < 0),
+    "and the row shows the stored alternative again");
+  /* Revert all forgets every abandoned shape too. */
+  first.unionShape["/server/log_level"] = 0;
+  first.stageOperations([], "user");
+  assert(first.unionShape["/server/log_level"] === undefined, "revert all clears the shapes");
+
   /* An array that declares the shape of its items offers that shape: the new
    * row gets the control of the item type and the default of that type, and a
    * value typed into it belongs to the add instead of forming a second one. */
@@ -872,6 +913,17 @@ return submitted.then(() => {
   first.revert(DIRECTORY + "/beta/weight");
   assert(first.getPendingOperations().every((item) => item.path.indexOf(DIRECTORY) !== 0),
          "reverting the new entries leaves the rest of the batch alone");
+
+  /* A key of an open object collection is removable by its own path. */
+  const alphaNode = find(first.treeNode, (node) => node.dataset && node.dataset.path === DIRECTORY + "/alpha");
+  assert(alphaNode, "the dynamic entry is rendered");
+  const removeEntry = find(alphaNode, (node) =>
+    String(node.tagName).toUpperCase() === "BUTTON" && node.title === "Remove this entry");
+  assert(removeEntry, "a dynamic object entry offers removal");
+  removeEntry.events.click();
+  assert(first.getPendingOperations().some((item) => item.op === "remove" &&
+         item.path === DIRECTORY + "/alpha"), "and stages a remove on its own path");
+  first.revert(DIRECTORY + "/alpha");
 
   first.stageOperations([{ op: "set", path: "/server/port", value_text: "8385" }], "user");
   first.stageOperations([{ op: "set", path: "/server/port", value_text: "8383" }], "user");

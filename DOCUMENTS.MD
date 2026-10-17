@@ -45,6 +45,6 @@ every document and what it is responsible for, per the agent workflow in
 - `SPEC.md` is agent-write-protected. A required correction goes into
   `SPEC_.md` with the section format required by `AGENTS.md`.
 - An interface change updates `SPEC_service.md` and the implementation in the
-  same change (SPEC_service.md section 19).
+  same change (SPEC_service.md section 22).
 - New behaviour is recorded in `IMPLEMENTATION_LOG.md`; decisions with
   rationale go into `_AGENT_NOTES.md`.

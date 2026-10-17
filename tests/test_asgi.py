@@ -136,6 +136,29 @@ def test_bundled_assets_are_served_without_a_static_dir(asgi_client):
     assert headers["Cache-Control"] == "no-cache, must-revalidate"
 
 
+def test_assets_are_served_under_the_mount_prefix(asgi_client):
+    status, _payload, headers = asgi_client.get("/api/settings/assets/aiset.css")
+    assert status == 200
+    assert headers["Content-Type"] == "text/css; charset=utf-8"
+    assert headers["Cache-Control"] == "no-cache, must-revalidate"
+
+
+def test_document_validate_matches_wsgi(service):
+    from tests.conftest import DEMO_CONFIG
+
+    asgi = AsgiClient(create_asgi_app(service))
+    wsgi = WsgiClient(create_app(service))
+    body = {"document": "demo", "source": DEMO_CONFIG}
+    assert asgi.post("/api/settings/document/validate", body)[1] == wsgi.post(
+        "/api/settings/document/validate", body
+    )[1]
+    status, payload, _ = asgi.post(
+        "/api/settings/document/validate", {"document": "demo", "source": "{ not_declared: 1 }"}
+    )
+    assert status == 200 and payload["valid"] is False
+    assert any(issue["path"] == "/not_declared" for issue in payload["issues"])
+
+
 def test_unknown_asset_is_not_found(asgi_client):
     status, payload, _ = asgi_client.get("/assets/nope.js")
     assert status == 404 and payload["error"]["code"] == "NOT_FOUND"
