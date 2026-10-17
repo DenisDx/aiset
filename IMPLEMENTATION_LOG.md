@@ -614,3 +614,22 @@ holds the reproductions and stays the record of what was asked for.
     sections 8 and 8a. Tests: `tests/test_ui_assets.py`,
     `demo2/tests/test_page.py`, `demo2/tests/test_app.py`. `./test.sh`: 419
     passed.
+
+- 2026-10-17. Renaming an object key is now one operation instead of a
+  `remove` plus an `add`. The editor expressed a key rename as remove-old +
+  add-new, so the tree showed a deleted old entry next to a new one whose
+  declared children were empty (the preview was built from the descriptor shape,
+  not the copied `value_text`), and the old entry's comments were lost.
+  - `jsonsrc.Document.apply_rename(pointer, new_key)` replaces only the member's
+    key span (`key_start..key_end`), keeping the value and its comments;
+    non-identifier keys are quoted; a duplicate key is refused.
+  - `service` handles `{"op": "rename", "path": ..., "to": ...}`: the old key is
+    authorized like a `remove` (required/const/read-only/fixed-declared/secret),
+    the new key like an `add` (`children`/`additional_children`/`key_enum`/
+    `key_pattern`); `changed_paths` reports both paths and their subtrees.
+  - `aiset-tree.js` `_keyControl` stages a single `rename`; `_projectNode`
+    relocates the entry (and its whole subtree, via `_rebase`) to the new key and
+    badges it `renamed` instead of `deleted`; chained renames update the pending
+    op. Covered in `tests/test_ui_assets.py` and `tests/test_tree_and_operations.py`
+    (Document, service, authorization). Docs: `SPEC_service.md` section 20,
+    `AGENT_INTEGRATION.md` section 13. `./test.sh`: 425 passed.

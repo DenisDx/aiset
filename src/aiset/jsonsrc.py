@@ -703,6 +703,24 @@ class Document:
         body = self._render_array_body(parent_pointer, remaining, base_indent, unit)
         return self._splice(parent_pointer.start, parent_pointer.end, body)
 
+    def apply_rename(self, pointer: str, new_key: str) -> str:
+        """Rename one object key in place, keeping its value and comments."""
+        new_key = "" if new_key is None else str(new_key)
+        if not new_key:
+            raise PathError("A new key is required")
+        parent, token = self.find_parent(pointer)
+        if not isinstance(parent, ObjectNode):
+            raise PathError(f"Path {pointer!r} does not address an object key")
+        member = parent.member(token)
+        if member is None:
+            raise PathError(f"Missing object key {token!r}")
+        if new_key == token:
+            return self.text
+        if parent.member(new_key) is not None:
+            raise PathError(f"Duplicate object key {new_key!r}")
+        key_text = new_key if IDENTIFIER_RE.match(new_key) else quote_key(new_key)
+        return self._splice(member.key_start, member.key_end, key_text)
+
     def _array_index(
         self, parent: ArrayNode, token: str, pointer: str, *, allow_end: bool = False
     ) -> int:

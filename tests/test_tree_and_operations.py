@@ -367,6 +367,48 @@ def test_move_to_end_position():
     assert Document(after).stored_value(Document(after).root)["list"] == ["b", "a"]
 
 
+def test_rename_object_key_keeps_value_and_comments():
+    document = Document(
+        "{\n  // leading\n  main: {\n    a: 1, // trailing\n  },\n  other: 2,\n}\n"
+    )
+    after = document.apply_rename("/main", "primary")
+    stored = Document(after).stored_value(Document(after).root)
+    assert stored == {"primary": {"a": 1}, "other": 2}
+    assert "// leading" in after and "// trailing" in after
+
+
+def test_rename_object_key_quotes_a_non_identifier():
+    after = Document("{ main: 1 }").apply_rename("/main", "main key")
+    assert '"main key": 1' in after
+
+
+def test_rename_object_key_rejects_a_duplicate():
+    with pytest.raises(Exception):
+        Document("{ a: 1, b: 2 }").apply_rename("/a", "b")
+
+
+def test_rename_is_one_operation_that_keeps_the_subtree(demo_dir, service, principal):
+    result = apply(service, principal, [{"op": "rename", "path": "/logging/sinks/main", "to": "primary"}])
+    assert result.stored and result.valid
+    after = read(demo_dir / "config.json5")
+    assert "primary:" in after and "main:" not in after
+    assert "Trailing comment for the main sink." in after
+    assert "/logging/sinks/main" in result.changed_paths
+    assert "/logging/sinks/primary" in result.changed_paths
+    loaded = service.load("demo", principal=principal)
+    assert loaded.effective["logging"]["sinks"]["primary"]["target"] == "logs/main.log"
+    assert "main" not in loaded.effective["logging"]["sinks"]
+
+
+def test_rename_checks_the_new_key_and_the_old_one(demo_dir, service, principal):
+    # key_enum forbids a key outside the enum.
+    with pytest.raises(Exception):
+        apply(service, principal, [{"op": "rename", "path": "/logging/levels/workers", "to": "warnings"}])
+    # A fixed declared child of an object cannot be renamed.
+    with pytest.raises(Exception):
+        apply(service, principal, [{"op": "rename", "path": "/counters/zero", "to": "one"}])
+
+
 def test_add_dynamic_property():
     document = Document("{\n  dyn: {\n    a: 1,\n  },\n}\n")
     after = document.apply_add("/dyn/b", "2")

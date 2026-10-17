@@ -449,6 +449,20 @@
         return false;
       }
     }
+    if (operation.op === "rename") {
+      /* Renaming a node a previous rename already moved updates that rename
+       * instead of stacking a second one on a path that will not exist yet. */
+      var parent = path.slice(0, path.lastIndexOf("/"));
+      var chained = null;
+      this.pending.forEach(function (item) {
+        var op = item.operation;
+        if (op.op === "rename" && op.to) {
+          var target = op.path.slice(0, op.path.lastIndexOf("/")) + "/" + escapeToken(op.to);
+          if (target === path) { chained = op; }
+        }
+      });
+      if (chained) { chained.to = operation.to; return false; }
+    }
     return true;
   };
 
@@ -629,13 +643,17 @@
   };
 
   TreeEditor.prototype._pendingIndex = function () {
-    var sets = {}, removes = {}, adds = {}, moves = {};
+    var sets = {}, removes = {}, adds = {}, moves = {}, renames = {};
     this.pending.forEach(function (item) {
       var op = item.operation;
       var path = op.path || op.from || "";
       if (op.op === "set") { sets[path] = op; }
       else if (op.op === "remove") { removes[path] = true; }
-      else if (op.op === "add") {
+      else if (op.op === "rename") {
+        /* Keyed by the parent, so the child of that container is relocated. */
+        var owner = path.slice(0, path.lastIndexOf("/"));
+        (renames[owner] = renames[owner] || []).push({ from: path.slice(path.lastIndexOf("/") + 1), to: op.to });
+      } else if (op.op === "add") {
         var parent = path.slice(0, path.lastIndexOf("/"));
         (adds[parent] = adds[parent] || []).push(item);
       } else if (op.op === "move") {
@@ -645,7 +663,25 @@
         (moves[target] = moves[target] || []).push({ from: op.from || op.path, to: path.slice(path.lastIndexOf("/") + 1), operation: op });
       }
     });
-    return { sets: sets, removes: removes, adds: adds, moves: moves };
+    return { sets: sets, removes: removes, adds: adds, moves: moves, renames: renames };
+  };
+
+  /* A copy of a subtree whose pointers are rewritten from one prefix to another,
+   * so a renamed key moves its descendants' paths with it. */
+  TreeEditor.prototype._rebase = function (node, oldPath, newPath) {
+    var copy = Object.assign({}, node);
+    copy.path = newPath + node.path.slice(oldPath.length);
+    if (node.children) {
+      copy.children = node.children.map(function (child) {
+        return this._rebase(child, oldPath, newPath);
+      }, this);
+    }
+    if (node.items) {
+      copy.items = node.items.map(function (child) {
+        return this._rebase(child, oldPath, newPath);
+      }, this);
+    }
+    return copy;
   };
 
   /* Returns the same node object when nothing below it changed, so an untouched
@@ -656,9 +692,10 @@
     var ownRemove = index.removes[path];
     var ownAdds = index.adds[path] || [];
     var ownMoves = index.moves[path] || [];
+    var ownRenames = index.renames[path] || [];
     var base = node.children || [];
     var items = node.items || [];
-    var touched = ownSet || ownRemove || ownAdds.length || ownMoves.length;
+    var touched = ownSet || ownRemove || ownAdds.length || ownMoves.length || ownRenames.length;
     var children = null;
     var projectedItems = null;
 
@@ -666,7 +703,21 @@
       var copy = [];
       var changedChild = false;
       for (var i = 0; i < base.length; i += 1) {
-        var childPath = path + "/" + escapeToken(base[i].path.split("/").pop());
+        var token = base[i].path.split("/").pop();
+        var rename = null;
+        for (var r = 0; r < ownRenames.length; r += 1) {
+          if (ownRenames[r].from === token) { rename = ownRenames[r]; break; }
+        }
+        if (rename) {
+          /* A renamed entry keeps its whole subtree; only the key changes. */
+          var newPath = path + "/" + escapeToken(rename.to);
+          var rebased = this._rebase(base[i], base[i].path, newPath);
+          rebased.renamed = true;
+          copy.push(this._projectNode(rebased, newPath, index));
+          changedChild = true;
+          continue;
+        }
+        var childPath = path + "/" + escapeToken(token);
         var projected = this._projectNode(base[i], childPath, index);
         if (projected !== base[i]) { changedChild = true; }
         copy.push(projected);
@@ -677,7 +728,20 @@
       var itemCopy = [];
       var itemChanged = false;
       for (var j = 0; j < items.length; j += 1) {
-        var itemPath = path + "/" + items[j].path.split("/").pop();
+        var itemToken = items[j].path.split("/").pop();
+        var itemRename = null;
+        for (var q = 0; q < ownRenames.length; q += 1) {
+          if (ownRenames[q].from === itemToken) { itemRename = ownRenames[q]; break; }
+        }
+        if (itemRename) {
+          var itemNewPath = path + "/" + escapeToken(itemRename.to);
+          var itemRebased = this._rebase(items[j], items[j].path, itemNewPath);
+          itemRebased.renamed = true;
+          itemCopy.push(this._projectNode(itemRebased, itemNewPath, index));
+          itemChanged = true;
+          continue;
+        }
+        var itemPath = path + "/" + escapeToken(itemToken);
         var projectedItem = this._projectNode(items[j], itemPath, index);
         if (projectedItem !== items[j]) { itemChanged = true; }
         itemCopy.push(projectedItem);
@@ -966,6 +1030,7 @@
     if (node.field && node.field.required) { wrap.appendChild(badge("required", "req")); }
     if (node.field && node.field.nullable) { wrap.appendChild(badge("nullable", "req")); }
     if (this._pendingFor(node.path)) { wrap.appendChild(badge("dirty", "dirty")); }
+    if (node.renamed) { wrap.appendChild(badge("renamed", "renamed")); }
     if (node.staged) { wrap.appendChild(badge("new", "new")); }
     if (node.pending_delete) { wrap.appendChild(badge("deleted", "deleted")); }
     return wrap;
@@ -1739,8 +1804,9 @@
       (caps.key_options && caps.key_options.length));
   };
 
-  /* Rename or name a child. A name is a path segment, so changing it writes the
-   * new entry and drops the old one; an empty name drops both again. */
+  /* Rename or name a child. Renaming an existing entry is one `rename`
+   * operation, so its value and comments move with the key; naming a draft
+   * creates it. */
   TreeEditor.prototype._keyControl = function (node, parent) {
     var self = this;
     var parentPath = parent.path;
@@ -1762,11 +1828,7 @@
         return;
       }
       if (!next || next === current) { return; }
-      var text = node.exists === false ? self._newEntryText(node.field, 0) : node.value_text;
-      self.stageOperations([
-        { op: "remove", path: parentPath + "/" + escapeToken(current) },
-        { op: "add", path: parentPath + "/" + escapeToken(next), value_text: text },
-      ], "user");
+      self.stageOperations([{ op: "rename", path: node.path, to: next }], "user");
     };
     var title = node.draft ? "Name this entry; an empty name closes the row"
       : "Key of " + node.path + "; changing it renames the entry";

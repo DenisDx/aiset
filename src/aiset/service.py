@@ -45,7 +45,7 @@ from .errors import (
     UnsupportedCapability,
     ValidationError,
 )
-from .jsonsrc import Document, parse_fragment
+from .jsonsrc import Document, escape, parse_fragment
 from .pointer import parse_pointer
 from .resolver import MISSING, Resolver, build_effective, effective_at, is_missing
 from .store import Settings, Store, decode, encode, revision_of_bytes
@@ -827,6 +827,12 @@ class Service:
                     self._check_operation(state, text, source, "move", None, principal)
                     self._check_operation(state, text, target, "move_index", None, principal)
                     text = Document(text, origin=registration.store.path.name).apply_move(source, target)
+                elif op == "rename":
+                    new_key = operation.get("to")
+                    self._check_operation(state, text, target, "rename", new_key, principal)
+                    text = Document(text, origin=registration.store.path.name).apply_rename(
+                        target, "" if new_key is None else str(new_key)
+                    )
                 else:
                     raise BadRequest(f"Unknown operation {op!r}")
             except (Forbidden, SecretAccessDenied, Unauthorized):
@@ -885,6 +891,33 @@ class Service:
                 raise BadRequest(f"Key {token!r} is not in key_enum")
             if parent_node.key_pattern and not re.match(parent_node.key_pattern, token):
                 raise BadRequest(f"Key {token!r} does not match key_pattern")
+            return
+        if op == "rename":
+            if parent_node.type != "object":
+                raise BadRequest("Only object keys can be renamed")
+            old_node = self._node_for(state.registration, pointer, required=False)
+            if old_node is None:
+                raise NotFound(f"Path {pointer!r} is not declared by the descriptor")
+            if old_node.required:
+                raise Forbidden(f"Path {pointer!r} is required and cannot be renamed")
+            if old_node.read_only:
+                raise Forbidden(f"Path {pointer!r} is read-only")
+            if old_node.const is not None:
+                raise Forbidden(f"Path {pointer!r} has a fixed value")
+            if parent_node.children and token in parent_node.children and parent_node.additional_children is None:
+                raise Forbidden(f"Path {pointer!r} is a fixed declared child")
+            if old_node.secret and not principal.has("settings_edit_secret"):
+                raise SecretAccessDenied(f"Path {pointer!r} is a secret subtree")
+            new_key = "" if value_text is None else str(value_text)
+            if not new_key:
+                raise BadRequest("rename requires a non-empty 'to' key")
+            if new_key != token and not (parent_node.children and new_key in parent_node.children):
+                if parent_node.additional_children is None:
+                    raise BadRequest(f"Key {new_key!r} is not permitted at {parent_pointer!r}")
+                if parent_node.key_enum and new_key not in parent_node.key_enum:
+                    raise BadRequest(f"Key {new_key!r} is not in key_enum")
+                if parent_node.key_pattern and not re.match(parent_node.key_pattern, new_key):
+                    raise BadRequest(f"Key {new_key!r} does not match key_pattern")
             return
         node = self._node_for(state.registration, pointer, required=False)
         if node is None and parent_node.type == "array" and parent_node.option_nodes:
@@ -1340,6 +1373,15 @@ class Service:
                 base = pointer.rstrip("/")
                 touched.update(state.document.paths(base))
                 touched.update(candidate.paths(base))
+            if operation.get("op") == "rename":
+                # The new key is a path too, and it exists only after the batch.
+                base = str(operation.get("path") or "")
+                parent = base.rsplit("/", 1)[0]
+                new_key = operation.get("to")
+                if isinstance(new_key, str) and new_key:
+                    pointer = parent + "/" + escape(new_key)
+                    touched.update(state.document.paths(pointer))
+                    touched.update(candidate.paths(pointer))
         return sorted(touched)
 
     def _changed_paths(self, state: DocumentState, candidate_text: str, pointer: str) -> list[str]:

@@ -926,7 +926,8 @@ return submitted.then(() => {
   assert(first.getPendingOperations().some((item) => item.op === "set" &&
          item.path === DIRECTORY + "/beta/weight"), "which writes only that field, by its own path");
 
-  /* A key is a path segment, so a new name is written and the old one dropped. */
+  /* Renaming a key is one operation: the entry, its value and its comments move
+   * with the key instead of a remove plus an add. */
   const keyField = (function all(node, out) {
     if (node.className === "aiset-tree-key" && node.value === "alpha") out.push(node);
     for (const child of node.children || []) all(child, out);
@@ -936,10 +937,15 @@ return submitted.then(() => {
   keyField.value = "gamma";
   keyField.events.change();
   const ops = first.getPendingOperations();
-  assert(ops.some((item) => item.op === "remove" && item.path === DIRECTORY + "/alpha"), "the old key is dropped");
-  assert(ops.some((item) => item.op === "add" && item.path === DIRECTORY + "/gamma"), "and the new one is written");
+  assert(ops.some((item) => item.op === "rename" && item.path === DIRECTORY + "/alpha" && item.to === "gamma"),
+         "renaming a key stages a single rename");
+  assert(!ops.some((item) => item.op === "remove" && item.path === DIRECTORY + "/alpha"),
+         "the old key is not dropped");
+  assert(!ops.some((item) => item.op === "add" && item.path === DIRECTORY + "/gamma"),
+         "and no second entry is created");
+  assert(find(first.treeNode, (node) => node.dataset && node.dataset.path === DIRECTORY + "/gamma"),
+         "the renamed entry is shown at its new key");
   first.revert(DIRECTORY + "/alpha");
-  first.revert(DIRECTORY + "/gamma");
   first.revert(DIRECTORY + "/beta");
   first.revert(DIRECTORY + "/beta/weight");
   assert(first.getPendingOperations().every((item) => item.path.indexOf(DIRECTORY) !== 0),

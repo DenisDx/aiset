@@ -684,6 +684,7 @@ means this node may be removed from its parent.
 {"op": "add",    "path": "/server/host",  "value_text": "\"0.0.0.0\""}
 {"op": "remove", "path": "/fixtures/tags/1"}
 {"op": "move",   "from": "/fixtures/tags/1", "path": "/fixtures/tags/0"}
+{"op": "rename", "path": "/fixtures/dynamic/old_key", "to": "new_key"}
 ```
 
 - `add` on an array uses the `-` append token; on an object it names a key the
@@ -691,6 +692,9 @@ means this node may be removed from its parent.
 - `remove` is refused for `required`, `const` and `read_only` nodes.
 - `remove` on an object entry names its key, so a dynamic key (`/obj/some-key`)
   is deleted the same way an array item is; the entry keeps its comments with it.
+- `rename` changes one object key in place, keeping the value and its comments as
+  one entry (never a `remove` plus an `add`). `to` is the new key, checked like
+  an `add` key; the editor stages this when the user edits a key field.
 - `move` carries the item with its comments.
 - One batch, one revision, all-or-nothing: the first failure aborts everything
   and the file stays byte-for-byte unchanged.

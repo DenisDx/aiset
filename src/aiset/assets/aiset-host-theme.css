@@ -59,6 +59,7 @@
 .aiset-tree-badge.lock { color: var(--aiset-err); border-color: var(--aiset-err); }
 .aiset-tree-badge.origin, .aiset-tree-badge.env { color: var(--aiset-ok); }
 .aiset-tree-badge.draft { color: var(--aiset-muted); border-color: var(--aiset-muted); font-style: italic; }
+.aiset-tree-badge.renamed { color: var(--aiset-accent); border-color: var(--aiset-accent); }
 .aiset-tree-node.is-deleted > .aiset-tree-row { opacity: 0.55; }
 .aiset-tree-node.is-deleted > .aiset-tree-row .aiset-tree-name,
 .aiset-tree-node.is-deleted > .aiset-tree-row .aiset-tree-value { text-decoration: line-through; }

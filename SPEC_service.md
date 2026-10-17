@@ -713,6 +713,7 @@ Operation shapes:
 {"op": "add",    "path": "/fixtures/dynamic/new_key", "value_text": "1"}
 {"op": "remove", "path": "/fixtures/tags/1"}
 {"op": "move",   "from": "/fixtures/items/2", "path": "/fixtures/items/0"}
+{"op": "rename", "path": "/fixtures/dynamic/old_key", "to": "new_key"}
 ```
 
 HTTP:
@@ -741,6 +742,12 @@ Rules:
 - `remove` is refused for required, `const`, and `read_only` nodes and for fixed
   declared children of an object without `additional_children`.
 - `move` takes an array item to another index, carrying its comments with it.
+- `rename` changes one object key in place, keeping the value and its comments
+  (one entry, never a `remove` plus an `add`). `to` is the new key, authorized
+  like an `add` key (`children`, `additional_children`, `key_enum`,
+  `key_pattern`); the old key is refused when it is required, `const`,
+  `read_only` or a fixed declared child, and a new key that already exists is
+  refused.
 - Every affected path is authorized (secret and read-only descendants included)
   and validated before anything is written.
 - Operations are applied in order to one candidate document; the first failure
