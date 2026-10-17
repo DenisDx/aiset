@@ -119,6 +119,7 @@ def create_asgi_app(
     static_dir: str | Path | None = None,
     assets_dir: str | Path | None = None,
     static_map: dict[str, str] | None = None,
+    public_documents: bool = False,
 ) -> Callable[[Scope, Receive, Send], Awaitable[None]]:
     """Build the ASGI application for one service.
 
@@ -155,6 +156,7 @@ def create_asgi_app(
         static_dir=static_dir,
         assets_dir=assets_dir,
         static_map=static_map,
+        public_documents=public_documents,
     )
 
     async def app(scope: Scope, receive: Receive, send: Send) -> None:

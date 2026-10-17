@@ -92,6 +92,24 @@ def test_list_documents(client):
     assert status == 200 and payload["documents"] == ["demo"]
 
 
+def test_document_list_requires_read_permission(service):
+    anon = Client(create_app(
+        service, principal_resolver=lambda environ: Principal(id="anon", permissions=frozenset())
+    ))
+    status, payload = anon.get("/api/settings/documents")
+    assert status == 403 and payload["error"]["code"] == "FORBIDDEN"
+
+
+def test_document_list_can_be_made_public(service):
+    anon = Client(create_app(
+        service,
+        public_documents=True,
+        principal_resolver=lambda environ: Principal(id="anon", permissions=frozenset()),
+    ))
+    status, payload = anon.get("/api/settings/documents")
+    assert status == 200 and payload["documents"] == ["demo"]
+
+
 def test_descriptor_route(client):
     status, payload = client.get("/api/settings/descriptor", "document=demo&view=authorized")
     assert status == 200

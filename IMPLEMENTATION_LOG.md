@@ -573,3 +573,11 @@ holds the reproductions and stays the record of what was asked for.
   chooser now selects by alternative index and remembers the chosen shape per
   node (`unionShape`), which is cleared on reload. Covered in
   `tests/test_ui_assets.py`.
+
+- 2026-10-17. `proposal_improvement3.md` item 1: `GET {base}/documents` now
+  requires `settings_read_source` (via `Service.list_documents`) and returns
+  `403` otherwise; `/health` remains the only public route. A host that wants a
+  public document list passes `public_documents=True` to `create_app` /
+  `create_asgi_app`. Covered in `tests/test_http.py` and `tests/test_asgi.py`;
+  docs updated in `SPEC_service.md` section 10 and `AGENT_INTEGRATION.md`
+  section 6.

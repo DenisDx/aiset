@@ -120,6 +120,24 @@ def test_documents(asgi_client):
     assert status == 200 and payload["documents"] == ["demo"]
 
 
+def test_document_list_requires_read_permission(service):
+    anon = AsgiClient(create_asgi_app(
+        service, principal_resolver=lambda environ: Principal(id="anon", permissions=frozenset())
+    ))
+    status, payload, _ = anon.get("/api/settings/documents")
+    assert status == 403 and payload["error"]["code"] == "FORBIDDEN"
+
+
+def test_document_list_can_be_made_public(service):
+    anon = AsgiClient(create_asgi_app(
+        service,
+        public_documents=True,
+        principal_resolver=lambda environ: Principal(id="anon", permissions=frozenset()),
+    ))
+    status, payload, _ = anon.get("/api/settings/documents")
+    assert status == 200 and payload["documents"] == ["demo"]
+
+
 def test_tree_matches_wsgi(service):
     asgi = AsgiClient(create_asgi_app(service))
     wsgi = WsgiClient(create_app(service))

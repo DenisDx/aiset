@@ -335,6 +335,12 @@ that mount the assets separately, at `/assets/<name>`. `POST
 {base}/document/validate` takes `{"document", "source"}` and validates a whole
 candidate document without writing or reading the live file.
 
+Every route enforces the permission its operation names. `GET {base}/health` is
+the only public route; `GET {base}/documents` requires `settings_read_source`
+like any other read. A host that wants a public document list (for example a
+liveness probe) opts in with the `public_documents=True` argument to
+`create_app` / `create_asgi_app`, rather than getting it by accident.
+
 `POST` body for `validate` and `set`:
 
 ```json

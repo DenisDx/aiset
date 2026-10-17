@@ -51,12 +51,17 @@ def create_app(
     static_dir: str | Path | None = None,
     assets_dir: str | Path | None = None,
     static_map: dict[str, str] | None = None,
+    public_documents: bool = False,
 ) -> Callable[[dict[str, Any], Callable[..., Any]], Iterable[bytes]]:
     """Build the WSGI application for one service.
 
     `static_map` adds host files (for example a host script or stylesheet) to the
     bundled frontend: route path -> file name inside `static_dir`. The bundled
     browser assets under `/assets/` are served with or without `static_dir`.
+
+    `GET /documents` requires `settings_read_source` by default; a host that
+    wants a public document list (a liveness probe, for example) opts in with
+    `public_documents=True` rather than getting it by accident.
     """
     dispatch = _build_dispatcher(
         service,
@@ -65,6 +70,7 @@ def create_app(
         static_dir=static_dir,
         assets_dir=assets_dir,
         static_map=static_map,
+        public_documents=public_documents,
     )
 
     def app(environ: dict[str, Any], start_response: Callable[..., Any]) -> Iterable[bytes]:
@@ -101,6 +107,7 @@ def _build_dispatcher(
     static_dir: str | Path | None = None,
     assets_dir: str | Path | None = None,
     static_map: dict[str, str] | None = None,
+    public_documents: bool = False,
 ) -> Callable[[_Request, Callable[..., Any]], Iterable[bytes]]:
     """Route one normalized request; shared by every transport."""
     base = base.rstrip("/")
@@ -134,6 +141,7 @@ def _build_dispatcher(
                     method,
                     route,
                     resolve_principal(request),
+                    public_documents=public_documents,
                 )
             if static_root is not None or path.startswith("/assets/"):
                 return _static(start_response, static_root, path, asset_root, static_map or {})
@@ -180,6 +188,8 @@ def _handle_api(
     method: str,
     route: str,
     principal: Principal,
+    *,
+    public_documents: bool = False,
 ) -> Iterable[bytes]:
     query = parse_qs(request.query)
 
@@ -206,7 +216,8 @@ def _handle_api(
         return _json(start_response, 200, {"ok": True, **result})
 
     if method == "GET" and route == "/documents":
-        return _json(start_response, 200, {"ok": True, "documents": sorted(service.documents)})
+        documents = sorted(service.documents) if public_documents else service.list_documents(principal=principal)
+        return _json(start_response, 200, {"ok": True, "documents": documents})
 
     if method == "POST" and route == "/validate":
         payload = _body(request, service)

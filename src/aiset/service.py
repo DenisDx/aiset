@@ -680,6 +680,11 @@ class Service:
             active_revision=state.active_revision,
         )
 
+    def list_documents(self, *, principal: Principal) -> list[str]:
+        """Registered document ids; the same read permission a read requires."""
+        self._require(principal, "settings_read_source")
+        return sorted(self.documents)
+
     def tree(
         self, document_id: str, path: str = "", *, view: str = "source", principal: Principal
     ) -> dict[str, Any]:

@@ -180,10 +180,14 @@ the only state that advances `active_revision`.
 ## 6. HTTP API
 
 `create_app(service, base="/api/settings", *, principal_resolver, static_dir,
-assets_dir, static_map)` serves everything below. `principal_resolver(environ)`
-must map the incoming request to a `Principal`; the demo uses `Principal.demo()`.
-There is no authentication, TLS, CORS or CSRF logic in the library: the host
-owns authentication and must wrap the app.
+assets_dir, static_map, public_documents)` serves everything below.
+`principal_resolver(environ)` must map the incoming request to a `Principal`; the
+demo uses `Principal.demo()`. There is no authentication, TLS, CORS or CSRF logic
+in the library: the host owns authentication and must wrap the app.
+
+Every route requires a permission except `/health`, which is public. In
+particular `GET /documents` requires `settings_read_source`; a host that wants a
+public document list (a liveness probe) opts in with `public_documents=True`.
 
 | Method | Route | Input | Success payload |
 |---|---|---|---|
