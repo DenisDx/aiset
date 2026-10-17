@@ -470,6 +470,22 @@
                 description: "Same template mechanism, second element",
                 apply: "reload",
               },
+              // The same template used as a type of the items of an array and of
+              // the values of an object. The main descriptor does not repeat the
+              // shape: it imports the template from conf2/descriptor.json5 and
+              // names it, so one definition serves both documents.
+              testobjarray: {
+                type: "array",
+                description: "Items are objects of the template declared in conf2/descriptor.json5",
+                apply: "reload",
+                children: { type: "typedefvalue1", description: "One templated item" },
+              },
+              testobjobj: {
+                type: "object",
+                description: "Every key holds such an object, by key",
+                apply: "reload",
+                additional_children: { type: "typedefvalue1", description: "One templated value" },
+              },
             },
           },
         },

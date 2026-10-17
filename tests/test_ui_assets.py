@@ -24,7 +24,14 @@ function stubElement() {
   const node = {
     style: {}, dataset: {}, children: [], value: "", textContent: "", disabled: false,
     checked: false, className: "", innerHTML: "",
-    setAttribute(key, value) { this[key] = value; },
+    setAttribute(key, value) {
+      /* Boolean attributes are disabled by presence, as in a real browser. */
+      if (key === "disabled" || key === "checked" || key === "readonly" || key === "required") {
+        this[key] = true;
+      } else {
+        this[key] = value;
+      }
+    },
     getAttribute(key) { return this[key] === undefined ? null : this[key]; }, remove() {},
     addEventListener(event, handler) { (this.events = this.events || {})[event] = handler; },
     querySelector() { return stubElement(); },
@@ -167,6 +174,56 @@ const TREE = {
         capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
         children: [], items: [],
       }, {
+        path: "/server/numbers", type: "array", exists: true, access_denied: false, kind: "array",
+        origin: { kind: "file" }, apply: "restart", value_text: "[7]",
+        field: { type: "array", description: "int items",
+                 children: { type: "int", description: "One number" } },
+        capabilities: { edit: true, add: true, remove: true, reorder: false, add_child: false, remove_child: false },
+        children: [],
+        items: [{
+          path: "/server/numbers/0", type: "int", exists: true, access_denied: false, kind: "array_item",
+          origin: { kind: "file" }, apply: "restart", value_text: "7",
+          field: { type: "int", description: "One number" },
+          capabilities: { edit: true, add: false, remove: true, reorder: true, add_child: false, remove_child: false },
+          children: [], items: [],
+        }],
+      }, {
+        path: "/server/directory", type: "object", exists: true, access_denied: false, kind: "dynamic_key",
+        origin: { kind: "file" }, apply: "reload", value_text: "{}",
+        field: { type: "object", description: "keys the user names",
+                 additional_children: {
+                   type: "object", description: "One templated card", required: true,
+                   children: { label: { type: "string", required: true, description: "name" },
+                               weight: { type: "int", description: "optional" } } } },
+        additional_child: {
+          type: "object", description: "One templated card", required: true,
+          children: { label: { type: "string", required: true, description: "name" },
+                      weight: { type: "int", description: "optional" } } },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: true, remove_child: true },
+        children: [{
+          path: "/server/directory/alpha", type: "object", exists: true, access_denied: false, kind: "dynamic_key",
+          origin: { kind: "file" }, apply: "reload", value_text: "{\n  label: \"a\"\n}",
+          field: { type: "object", description: "One templated card", required: true,
+                   children: { label: { type: "string", required: true, description: "name" },
+                               weight: { type: "int", description: "optional" } } },
+          capabilities: { edit: true, add: false, remove: true, reorder: false, add_child: true, remove_child: true },
+          children: [{
+            path: "/server/directory/alpha/label", type: "string", exists: true, access_denied: false, kind: "leaf",
+            origin: { kind: "file" }, apply: "reload", value_text: '"a"',
+            field: { type: "string", description: "name", required: true },
+            capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+            children: [], items: [],
+          }, {
+            path: "/server/directory/alpha/weight", type: "int", exists: false, access_denied: false, kind: "leaf",
+            origin: { kind: "absent" }, apply: "reload", value_text: null,
+            field: { type: "int", description: "optional" },
+            capabilities: { edit: false, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+            children: [], items: [],
+          }],
+          items: [],
+        }],
+        items: [],
+      }, {
         path: "/server/hosts", type: "array", exists: true, access_denied: false, kind: "array_item",
         origin: { kind: "file" }, apply: "restart", value_text: '["127.0.0.1"]',
         field: { type: "array", description: "hosts" },
@@ -175,6 +232,12 @@ const TREE = {
         items: [{
           path: "/server/hosts/0", type: "string", exists: true, access_denied: false, kind: "array_item",
           origin: { kind: "file" }, apply: "restart", value_text: '"127.0.0.1"',
+          field: { type: "string", description: "host" },
+          capabilities: { edit: true, add: false, remove: true, reorder: true, add_child: false, remove_child: false },
+          children: [], items: [],
+        }, {
+          path: "/server/hosts/1", type: "string", exists: true, access_denied: false, kind: "array_item",
+          origin: { kind: "file" }, apply: "restart", value_text: '"10.0.0.1"',
           field: { type: "string", description: "host" },
           capabilities: { edit: true, add: false, remove: true, reorder: true, add_child: false, remove_child: false },
           children: [], items: [],
@@ -604,9 +667,8 @@ return submitted.then(() => {
   first.stageOperations([
     { op: "set", path: "/server/port", value_text: "8384" },
     { op: "remove", path: "/server/hosts/0" },
-    { op: "add", path: "/server/hosts/-", value_text: '"10.0.0.1"' },
     { op: "add", path: "/server/newprop", value_text: "5" },
-    { op: "move", from: "/server/hosts/0", path: "/server/hosts/1" },
+    { op: "move", from: "/server/hosts/1", path: "/server/hosts/0" },
   ], "user");
 
   assert(nodeAt(view(), "/server/port").value_text === "8384",
@@ -624,11 +686,6 @@ return submitted.then(() => {
   assert(deletedRow, "the deleted mark reaches the row");
   assert(deletedRow.className.indexOf("is-deleted") >= 0, "and the row is styled as deleted");
 
-  const appended = hosts().items.find((item) => item.path === "/server/hosts/-");
-  assert(appended, "a staged entry shows up in the tree");
-  assert(appended.path === "/server/hosts/-", "and keeps the path the service expects");
-  assert(appended.value_text === '"10.0.0.1"', "and shows the value that will be written");
-  assert(appended.label === "1", "and is labelled with the index it will get");
   assert(hosts().items.map((item) => item.value_text).join(",") === '"10.0.0.1","127.0.0.1"',
          "a staged move reorders what the user sees");
 
@@ -704,6 +761,118 @@ return submitted.then(() => {
          "choosing the stored level again clears dirty");
   assert(stagedFor("/server/env_enum") === undefined, "and leaves nothing staged for it");
 
+  /* An array that declares the shape of its items offers that shape: the new
+   * row gets the control of the item type and the default of that type, and a
+   * value typed into it belongs to the add instead of forming a second one. */
+  first.stageOperations([{ op: "add", path: "/server/numbers/-", value_text: "0" }], "user");
+  const added = nodeAt(view(), "/server/numbers/1");
+  assert(added && added.type === "int", "a new array entry knows the type of the items");
+  assert(added.value_text === "0", "and starts from the default of that type");
+  first.expandAll();
+  const newEntry = find(first.treeNode, (node) => node.dataset && node.dataset.path === "/server/numbers/1");
+  const numberInput = (function find(node) {
+    if (String(node.tagName).toUpperCase() === "INPUT" && node.type === "number") return node;
+    for (const child of node.children || []) { const found = find(child); if (found) return found; }
+    return null;
+  })(newEntry);
+  assert(numberInput, "and offers the control of that type, not a free text field");
+  assert(added.path === "/server/numbers/1" && added.label === "1",
+         "the new entry is addressed by the index it will have");
+  assert(first.getPendingOperations().some((item) => item.path === "/server/numbers/-"),
+         "while the operation keeps the append token the service expects");
+  assert(first._pendingFor("/server/numbers/1") === true,
+         "and the row counts as pending through the index");
+  first.stageOperations([{ op: "set", path: "/server/numbers/1", value_text: "42" }], "user");
+  const numbers = first.getPendingOperations().filter((item) => item.path === "/server/numbers/-");
+  assert(numbers.length === 1 && numbers[0].op === "add" && numbers[0].value_text === "42",
+         "typing a value into a new entry updates the add itself");
+  first.stageOperations([{ op: "set", path: "/server/numbers/1", value_text: "7" }], "user");
+  assert(first.getPendingOperations().filter((item) => item.path === "/server/numbers/-")[0].value_text === "7",
+         "and follows the control");
+  first.revert("/server/numbers/-");
+  assert(nodeAt(view(), "/server/numbers/1") === null, "revert removes the entry from the view");
+
+  /* Two appends to one array coexist. Keeping the default 0 is a real entry:
+   * the next "+" must not replace it, and each append gets its own index. */
+  first.stageOperations([{ op: "add", path: "/server/numbers/-", value_text: "0" }], "user");
+  first.stageOperations([{ op: "add", path: "/server/numbers/-", value_text: "0" }], "user");
+  assert(first.getPendingOperations().filter((item) => item.path === "/server/numbers/-").length === 2,
+         "two appends to the same array must both survive");
+  assert(nodeAt(view(), "/server/numbers/1") && nodeAt(view(), "/server/numbers/2"),
+         "and appear at two distinct indexes");
+  first.stageOperations([{ op: "set", path: "/server/numbers/2", value_text: "5" }], "user");
+  assert(first.getPendingOperations().filter((item) => item.path === "/server/numbers/-").length === 2,
+         "editing one entry does not collapse the other");
+  first.stageOperations([], "user");
+
+  /* A new entry starts empty and shows every declared fixed child regardless
+   * of the show-absent setting, so the user can fill in the fields. Only the
+   * fields the user actually fills are written, each by its own path. */
+  const DIRECTORY = "/server/directory";
+  const addEntry = (function find(node) {
+    if (String(node.tagName).toUpperCase() === "BUTTON" && node.title === "Add a new entry with its own key") return node;
+    for (const child of node.children || []) { const found = find(child); if (found) return found; }
+    return null;
+  })(first.treeNode);
+  assert(addEntry, "an object the user names by itself offers to add an entry");
+  addEntry.events.click();
+  const keys = (function all(node, out) {
+    if (node.className === "aiset-tree-key") out.push(node);
+    for (const child of node.children || []) all(child, out);
+    return out;
+  })(first.treeNode, []);
+  const draft = keys[keys.length - 1];
+  assert(draft.value === "", "the new row waits for its name");
+  assert(draft.disabled === false, "the new key field is editable");
+  assert(first.getPendingOperations().some((item) => item.path.indexOf("/server/directory/") === 0) === false,
+         "and nothing of its own is staged before it is named");
+  draft.value = "beta";
+  /* Enter and the following change/blur both fire: the name must be committed
+   * once, not stage the same entry twice. */
+  draft.events.keydown({ key: "Enter" });
+  draft.events.change();
+  const created = first.getPendingOperations().filter((item) => item.path === DIRECTORY + "/beta");
+  assert(created.length === 1 && created[0].op === "add",
+         "naming it stages the addition exactly once");
+  assert(created[0].value_text === "{}", "as an empty object: only filled fields are written");
+
+  const beta = nodeAt(view(), DIRECTORY + "/beta");
+  assert(beta && beta.children.length === 2, "the new entry knows the whole declared shape");
+  assert(beta.children[0].exists === false, "the required child starts unwritten");
+  assert(beta.children[1].exists === false, "the optional child starts unwritten too");
+  const absentChild = find(first.treeNode, (node) => node.dataset && node.dataset.path === DIRECTORY + "/beta/weight");
+  assert(absentChild && absentChild.dataset.absent === "true",
+         "both are visible for a new entry even with show-absent off");
+  const weightInput = (function find(node) {
+    if (String(node.tagName).toUpperCase() === "INPUT" && node.type === "number") return node;
+    for (const child of node.children || []) { const found = find(child); if (found) return found; }
+    return null;
+  })(absentChild);
+  assert(weightInput, "and can be filled in, because its parent is created by the same batch");
+  weightInput.value = "7";
+  weightInput.events.change();
+  assert(first.getPendingOperations().some((item) => item.op === "set" &&
+         item.path === DIRECTORY + "/beta/weight"), "which writes only that field, by its own path");
+
+  /* A key is a path segment, so a new name is written and the old one dropped. */
+  const keyField = (function all(node, out) {
+    if (node.className === "aiset-tree-key" && node.value === "alpha") out.push(node);
+    for (const child of node.children || []) all(child, out);
+    return out;
+  })(first.treeNode, [])[0];
+  assert(keyField, "an existing entry shows its key where the name stood");
+  keyField.value = "gamma";
+  keyField.events.change();
+  const ops = first.getPendingOperations();
+  assert(ops.some((item) => item.op === "remove" && item.path === DIRECTORY + "/alpha"), "the old key is dropped");
+  assert(ops.some((item) => item.op === "add" && item.path === DIRECTORY + "/gamma"), "and the new one is written");
+  first.revert(DIRECTORY + "/alpha");
+  first.revert(DIRECTORY + "/gamma");
+  first.revert(DIRECTORY + "/beta");
+  first.revert(DIRECTORY + "/beta/weight");
+  assert(first.getPendingOperations().every((item) => item.path.indexOf(DIRECTORY) !== 0),
+         "reverting the new entries leaves the rest of the batch alone");
+
   first.stageOperations([{ op: "set", path: "/server/port", value_text: "8385" }], "user");
   first.stageOperations([{ op: "set", path: "/server/port", value_text: "8383" }], "user");
   assert(first._pendingFor("/server/port") === false, "the same rule holds for a typed value");
@@ -719,7 +888,7 @@ return submitted.then(() => {
   stagedPaths.forEach((path) => first.revert(path));
   assert(first.getPendingOperations().length === 0,
          "reverting every staged path clears the view again, whatever the operation");
-  assert(hosts().items.length === 1, "and the tree is the snapshot again");
+  assert(hosts().items.length === 2, "and the tree is the snapshot again");
 })
 .then(() => {
   /* earlier blocks validate other fragments, so the commit is the last pair */

@@ -177,6 +177,41 @@
         },
         subValue5: ["one base item"],
       },
+
+      //AGENT: both structures below are typed from the same imported template,
+      //so every item and every value uses the typedefvalue1 form. The override
+      //retypes the array (the base array wins as a whole) and touches one key
+      //of testobjobj; the key it adds is taken from the update.
+      testobjarray: [
+        {
+          subValue1: "base item one",
+          subValue2: 11,
+          subValue3: true,
+          subValue4: {
+            innerSubValue2: "only in the base",
+          },
+          subValue5: ["one base item"],
+        },
+        {
+          subValue1: "base item two",
+          subValue2: 12,
+          subValue3: false,
+          subValue4: {
+            innerSubValue1: "base inner",
+            innerSubValue2: "kept",
+          },
+          subValue5: ["two", "base items"],
+        },
+      ],
+      testobjobj: {
+        shared: {
+          subValue1: "base shared",
+          subValue2: 21,
+          subValue4: {
+            innerSubValue2: "only in the base",
+          },
+        },
+      },
     },
   },
 }

@@ -53,19 +53,47 @@
         type: "object",
         description: "Template of the first override element, shared with the main descriptor",
         apply: "reload",
+        // The edit form of this type. The shipped `node_form` helper builds a
+        // modal over the children declared below: one row per field, each with
+        // the control of the declared type, and `settings.note` is its title.
+        // Every node written through this template opens the same form, so this
+        // one binding describes the element itself, an item of testobjarray and
+        // a value of testobjobj alike.
         helper: {
           tag: "node_form",
           actions: ["create", "edit"],
           presentation: "modal",
-          settings: { note: "Subform for the shared typedefvalue1 element" },
+          settings: { note: "typedefvalue1 — five fields, one modal form" },
         },
         children: {
-          subValue1: { type: "string", description: "Replaced by the override" },
-          subValue2: { type: "int", minimum: 0, description: "Replaced by the override" },
-          subValue3: { type: "bool", description: "Replaced by the override" },
+          // A required child must be filled before a new entry can be saved.
+          // Every declared child is shown for a new entry; only the fields the
+          // user actually fills in are written.
+          subValue1: {
+            type: "string",
+            required: true,
+            description: "Replaced by the override",
+            ui: {
+              label: "Text",
+              help: "Free text; the form shows a single line.",
+              placeholder: "text",
+            },
+          },
+          subValue2: {
+            type: "int",
+            minimum: 0,
+            description: "Replaced by the override",
+            ui: { label: "Count", help: "Whole number, zero or more; the form shows a number field." },
+          },
+          subValue3: {
+            type: "bool",
+            description: "Replaced by the override",
+            ui: { label: "Flag", help: "The form shows a checkbox." },
+          },
           subValue4: {
             type: "object",
             description: "Merged recursively: one inner field is replaced, the other survives",
+            ui: { label: "Inner pair", help: "Two string fields, each merged on its own." },
             children: {
               innerSubValue1: { type: "string", description: "Replaced by the override" },
               innerSubValue2: { type: "string", description: "Only in the base, survives the merge" },
@@ -74,9 +102,29 @@
           subValue5: {
             type: "array",
             description: "Replaced as a whole by the override",
+            ui: { label: "Items", help: "A list of strings, replaced as a whole and never element by element." },
             children: { type: "string", description: "One item" },
           },
         },
+      },
+
+      // An array whose element type *is* the template: the item node names the
+      // template, so the base section and the override can never describe
+      // different items. Each item opens the typedefvalue1 form.
+      testobjarray: {
+        type: "array",
+        description: "Items are objects typed by the shared template typedefvalue1",
+        apply: "reload",
+        children: { type: "typedefvalue1", description: "One templated item" },
+      },
+
+      // An object whose every value is such an object, addressed by key. Keys
+      // merge one by one, so the update may add a key the base does not have.
+      testobjobj: {
+        type: "object",
+        description: "Every key holds an object typed by the shared template typedefvalue1",
+        apply: "reload",
+        additional_children: { type: "typedefvalue1", description: "One templated value" },
       },
 
       // The same element, written through the template it declares.
@@ -98,7 +146,7 @@
           settings: { note: "Subform for the shared typedefvalue2 element" },
         },
         children: {
-          subValue1: { type: "string", description: "Replaced by the override" },
+          subValue1: { type: "string", required: true, description: "Replaced by the override" },
           subValue2: { type: "int", minimum: 0, description: "Replaced by the override" },
           subValue3: { type: "bool", description: "Replaced by the override" },
           subValue4: {

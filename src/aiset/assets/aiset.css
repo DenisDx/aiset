@@ -230,3 +230,8 @@
 .aiset-tree-node.is-deleted > .aiset-tree-row .aiset-tree-name,
 .aiset-tree-node.is-deleted > .aiset-tree-row .aiset-tree-value { text-decoration: line-through; }
 .aiset-tree-node.is-staged > .aiset-tree-row .aiset-tree-name { color: #1a7f37; }
+
+.aiset-tree-key { min-width: 120px; }
+.aiset-tree-badge.draft { color: #6b7280; border-color: #6b7280; }
+
+.aiset-tree-badge.draft { color: #6b7280; border-color: #6b7280; font-style: italic; }

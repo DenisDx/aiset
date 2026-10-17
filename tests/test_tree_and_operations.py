@@ -67,6 +67,21 @@ def test_tree_carries_field_metadata_and_capabilities(service, principal):
     assert node["origin"] == {"kind": "file"}
 
 
+def test_tree_carries_the_shape_of_an_array(service, principal):
+    """A client must know what a new entry of an array looks like."""
+    tree = service.tree("demo", "/empty_list", principal=principal)
+    shape = tree["node"]["field"]["children"]
+    assert shape["type"] == "int"
+    assert shape["minimum"] == 0
+    nested = service.tree("demo", "/nested_arrays", principal=principal)["node"]["field"]["children"]
+    assert nested["type"] == "array" and nested["children"]["type"] == "int"
+    assert service.get("demo", "/empty_list", principal=principal).field["children"]["type"] == "int"
+    # An array without options keeps a single item node; a union describes its
+    # alternatives instead and must not claim one.
+    union = service.tree("demo", "/log_level", principal=principal)["node"]["field"]
+    assert "children" not in union and union["children_options"]
+
+
 def test_tree_reports_environment_and_default_origins(service, principal):
     tree = service.tree("demo", "/http_port", view="effective", principal=principal)
     assert tree["node"]["origin"]["kind"] == "environment"

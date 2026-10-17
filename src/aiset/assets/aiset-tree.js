@@ -75,6 +75,11 @@
       else if (key === "class") { node.className = attrs[key]; }
       else if (key.indexOf("on") === 0) { node.addEventListener(key.slice(2), attrs[key]); }
       else if (key === "dataset") { Object.keys(attrs.dataset).forEach(function (d) { node.dataset[d] = attrs.dataset[d]; }); }
+      /* Boolean attributes are disabled by their presence: set them as
+       * properties, because setAttribute("disabled", false) still disables. */
+      else if (key === "disabled" || key === "checked" || key === "readonly" || key === "required") {
+        node[key] = attrs[key] === true || attrs[key] === "true";
+      }
       else if (attrs[key] !== null && attrs[key] !== undefined) { node.setAttribute(key, attrs[key]); }
     });
     (children || []).forEach(function (child) { if (child) { node.appendChild(child); } });
@@ -102,6 +107,8 @@
     this.rawMode = {};
     this.envDraft = {};
     this.hiddenTemplate = {};
+    this.keyDrafts = {};
+    this._addSeq = 0;
     this._envNames = {};
     this.handlers = {};
     this.busy = false;
@@ -345,8 +352,27 @@
    * and the node turns clean again — the same rule for every control, and the
    * reason toggling a checkbox twice ends where it started. */
   TreeEditor.prototype._reconcile = function (operation) {
+    var self = this;
     var path = operation.path || operation.from || "";
     if (operation.op === "set") {
+      /* A value of an entry that the same batch adds belongs to that add: the
+       * service accepts the append token on an add only, and one operation
+       * says the intended result better than two. */
+      var adds = this.pending.filter(function (item) {
+        return item.operation.op === "add" &&
+          (item.operation.path === path || self._resolvedAddPath(item) === path);
+      });
+      if (adds.length) {
+        for (var i = 0; i < adds.length; i += 1) {
+          adds[i].operation.value_text = operation.value_text;
+        }
+        return false;
+      }
+      var token = path.slice(path.lastIndexOf("/") + 1);
+      if (token === "-" || token === "*") {
+        /* An append token names an entry, and nothing has added it yet. */
+        return false;
+      }
       /* Editing a value means the node stays, so a staged removal of the same
        * node is dropped instead of leaving a batch that could not apply. */
       this.pending = this.pending.filter(function (item) {
@@ -367,13 +393,25 @@
     (operations || []).forEach(function (operation) {
       if (!operation) { return; }
       if (!self._reconcile(operation)) { return; }
-      var key = operation.op + "|" + (operation.path || "") + "|" + (operation.from || "");
+      /* Every append is its own entry: two appends to the same array share the
+       * path "-" but must not replace each other. Other operations still
+       * deduplicate by path. */
+      var key = operation.op === "add"
+        ? "add|" + (operation.path || "") + "|" + (self._addSeq++)
+        : operation.op + "|" + (operation.path || "") + "|" + (operation.from || "");
       var existing = -1;
       self.pending.forEach(function (item, index) {
         if (item.key === key) { existing = index; }
       });
       if (existing >= 0) { self.pending.splice(existing, 1); }
-      self.pending.push({ key: key, operation: Object.assign({}, operation), source: source || "user" });
+      var entry = { key: key, operation: Object.assign({}, operation), source: source || "user" };
+      self.pending.push(entry);
+      if (operation.op === "add") {
+        /* What was just created opens: the point of adding it is to fill it. */
+        self.expanded[self._resolvedAddPath(entry)] = true;
+        var parentPath = (operation.path || "").slice(0, (operation.path || "").lastIndexOf("/"));
+        if (parentPath) { self.expanded[parentPath] = true; }
+      }
     });
     if (!operations || !operations.length) { this.pending = []; }
     this._renderPending();
@@ -385,8 +423,10 @@
   /* Dropping a staged operation also restores the view: the row goes back to
    * the substitution the file holds, with its name and its drop button. */
   TreeEditor.prototype.revert = function (path) {
+    var self = this;
     this.pending = this.pending.filter(function (item) {
-      return item.operation.path !== path && item.operation.from !== path;
+      return item.operation.path !== path && item.operation.from !== path &&
+        !(item.operation.op === "add" && self._resolvedAddPath(item) === path);
     });
     delete this.hiddenTemplate[path];
     delete this.envDraft[path];
@@ -513,7 +553,9 @@
    * a staged addition appears, a staged removal stays visible but is marked as
    * deleted, and a staged move reorders. Nothing here touches the store. */
   TreeEditor.prototype._viewTree = function () {
-    if (!this.pending.length || !this.tree || !this.tree.node) { return this.tree; }
+    /* An open key row is part of the view too, and it is not an operation yet. */
+    var hasDrafts = Object.keys(this.keyDrafts).length > 0;
+    if ((!this.pending.length && !hasDrafts) || !this.tree || !this.tree.node) { return this.tree; }
     var index = this._pendingIndex();
     var node = this._projectNode(this.tree.node, "", index);
     return node ? Object.assign({}, this.tree, { node: node }) : this.tree;
@@ -528,7 +570,7 @@
       else if (op.op === "remove") { removes[path] = true; }
       else if (op.op === "add") {
         var parent = path.slice(0, path.lastIndexOf("/"));
-        (adds[parent] = adds[parent] || []).push({ path: path, operation: op });
+        (adds[parent] = adds[parent] || []).push(item);
       } else if (op.op === "move") {
         /* The target index lives in the destination path, the entry to move in
          * `from`; both sides matter, so both are kept. */
@@ -581,7 +623,21 @@
      * user assembled, not a simulation of index shifts. */
     var additions = [];
     for (var k = 0; k < ownAdds.length; k += 1) {
-      additions.push(this._newNode(ownAdds[k].path, ownAdds[k].operation.value_text, node));
+      /* A new entry is built from its shape and then projected like any other
+       * node. Each append gets its own concrete index, so several entries
+       * staged in one batch stay distinct. */
+      var addPath = this._resolvedAddPath(ownAdds[k]);
+      var fresh = this._newNode(addPath, ownAdds[k].operation.value_text, node, true);
+      additions.push(this._projectNode(fresh, fresh.path, index));
+    }
+    if (this.keyDrafts[path] && this._keyedObject(node)) {
+      var draft = this._newNode(path + "/", "", node, false);
+      draft.draft = true;
+      draft.exists = true;
+      draft.origin = { kind: "draft" };
+      draft.value_text = "";
+      children = (children || base).concat([draft]);
+      touched = true;
     }
     if (additions.length) {
       var intoArray = node.type === "array";
@@ -604,8 +660,10 @@
     if (ownSet) {
       /* Only the displayed value changes: the view modes stay as the user left
        * them, so a dropped substitution does not come back on its own. An edited
-       * value is not a new entry, so the row stays "dirty" only. */
+       * value is not a new entry, so the row stays "dirty" only. A value written
+       * where there was none is the exception: that creates the node. */
       view.value_text = ownSet.value_text;
+      if (view.exists === false) { view.exists = true; view.staged = true; }
     }
     if (ownRemove) { view.pending_delete = true; }
     return view;
@@ -634,40 +692,74 @@
    * shape of the parent, so the control renders the value that will be written. */
   /* "-"/"*" is the request form of an append; the row needs a real index. */
   TreeEditor.prototype._addLabel = function (parent, node) {
-    var tail = node.path.slice(node.path.lastIndexOf("/") + 1);
-    if (parent.type === "array") {
-      if (tail === "-" || tail === "*") { return String((parent.items || []).length); }
-    }
-    return tail;
+    if (parent.type === "array") { return node.path.slice(node.path.lastIndexOf("/") + 1); }
+    return node.path.slice(node.path.lastIndexOf("/") + 1);
   };
 
-  TreeEditor.prototype._newNode = function (path, valueText, parent) {
-    var field = (parent && parent.field) || null;
-    var declared = null;
-    if (field) {
-      if (field.additional_children) { declared = field.additional_children; }
-      else if (parent.type === "array" && field.children_options && field.children_options.length) {
-        declared = field.children_options[0];
-      } else if (parent.type === "object" && field.children) {
-        declared = field.children[path.split("/").pop()] || null;
-      }
+  /* The declared definition of something that does not exist yet: an array
+   * describes its items once, an object describes each of its own keys, and any
+   * other key takes the shape of `additional_children`. */
+  TreeEditor.prototype._shapeFor = function (parent, token) {
+    if (!parent) { return null; }
+    if (parent.type === "array") { return this._itemShape(parent); }
+    var field = parent.field || {};
+    if (token && token !== "-" && token !== "*" && field.children && field.children[token]) {
+      return field.children[token];
     }
+    return field.additional_children || this._childNode(field.children);
+  };
+
+  TreeEditor.prototype._newNode = function (path, valueText, parent, required, shape) {
+    var token = path.slice(path.lastIndexOf("/") + 1);
+    var declared = shape === undefined ? this._shapeFor(parent, token) : shape;
+    var field = (parent && parent.field) || null;
+    /* A new entry is addressed by the index it will have, because everything
+     * under it is written by that path; the append token stays in the add. */
+    var written = required !== false;
     var node = {
-      path: path,
-      exists: true,
-      staged: true,
+      path: written ? this._resolveAddPath(path) : path,
+      exists: written,
+      staged: written,
       access_denied: false,
-      origin: { kind: "staged" },
-      value_text: valueText === undefined || valueText === null ? "" : valueText,
-      capabilities: { edit: true, add: false, remove: true, reorder: false, add_child: false, remove_child: false },
+      origin: written ? { kind: "staged" } : { kind: "absent" },
+      value_text: written ? (valueText === undefined || valueText === null ? "" : valueText) : null,
+      /* An absent child of a new entry can be filled in: its parent is created
+       * by the same batch, so writing it is a plain set on an existing path. */
+      capabilities: {
+        edit: true,
+        /* An array that is not written yet still accepts an item: the append
+         * creates the list itself. */
+        add: !!(declared && declared.type === "array"),
+        remove: written, reorder: false,
+        add_child: !!(declared && declared.type === "object" && (declared.additional_children ||
+          (declared.children && Object.keys(declared.children).length) || declared.key_pattern)),
+        remove_child: !!(declared && declared.type === "object" && written),
+      },
       comments: [],
       children: [],
       items: [],
       type: (declared && declared.type) || "undeclared",
-      kind: parent && parent.type === "array" ? "array_item" : "leaf",
+      kind: parent && parent.type === "array" ? "array_item"
+        : declared && declared.type === "object" ? "object"
+        : declared && declared.type === "array" ? "array" : "leaf",
       field: declared || null,
       apply: (declared && declared.apply) || (parent && parent.apply) || null,
     };
+    if (declared && declared.type === "object") {
+      var children = declared.children || {};
+      Object.keys(children).forEach(function (key) {
+        /* A new entry is written empty, so every declared child starts absent
+         * and is shown only because its parent is new. Filling one stages a
+         * normal set by that child's path. */
+        node.children.push(this._newNode(node.path + "/" + escapeToken(key), null, declared,
+          false, children[key]));
+      }, this);
+    }
+    if (declared && declared.type === "array") {
+      node.kind = "array";
+      node.value_text = written ? node.value_text : null;
+      node.capabilities.remove = true;
+    }
     return node;
   };
 
@@ -690,14 +782,23 @@
     this.pendingNode.appendChild(list);
   };
 
-  /* Children of one node as they are rendered right now. */
+  /* Children of one node as they are rendered right now. A new object shows
+   * every declared fixed child, even unwritten ones, regardless of the
+   * show-absent setting: the point of adding it is to fill in the fields.
+   * Dynamic keys (`items`) stay hidden until they exist: those are open
+   * collections, not a fixed shape. */
   TreeEditor.prototype._visibleChildren = function (node) {
     var children = (node.children || []).concat(node.items || []);
     if (this.showAbsent) { return children; }
-    return children.filter(function (child) { return child.exists !== false; });
+    var fixed = node.children || [];
+    var isNewObject = !!node.staged && node.type === "object";
+    return children.filter(function (child) {
+      if (child.exists !== false) { return true; }
+      return isNewObject && fixed.indexOf(child) >= 0;
+    });
   };
 
-  TreeEditor.prototype._renderNode = function (node, isRoot) {
+  TreeEditor.prototype._renderNode = function (node, isRoot, parent) {
     var self = this;
     var container = element("div", {
       class: "aiset-tree-node" + (node.pending_delete ? " is-deleted" : "") + (node.staged ? " is-staged" : ""),
@@ -740,9 +841,15 @@
     row.appendChild(toggle);
 
     var name = isRoot ? (node.path || "/") : node.path.split("/").pop();
-    var labelNode = element("span", { class: "aiset-tree-name", text: node.label || name });
-    labelNode.setAttribute("title", this._tooltip(node));
-    row.appendChild(labelNode);
+    /* The key of a child the user names itself is that name, so it stands where
+     * the name stood, in front of the value, and can be corrected in place. */
+    if (!isRoot && this._keyedObject(parent)) {
+      row.appendChild(this._keyControl(node, parent));
+    } else {
+      var labelNode = element("span", { class: "aiset-tree-name", text: node.label || name });
+      labelNode.setAttribute("title", this._tooltip(node));
+      row.appendChild(labelNode);
+    }
     row.appendChild(this._badges(node));
     var value = this._valueControl(node);
     if (value) { row.appendChild(value); }
@@ -762,7 +869,7 @@
     if (composite && isOpen) {
       var group = element("div", { class: "aiset-tree-children", role: "group" });
       children.forEach(function (child) {
-        group.appendChild(self._renderNode(child, false));
+        group.appendChild(self._renderNode(child, false, node));
       });
       container.appendChild(group);
     }
@@ -777,7 +884,7 @@
     wrap.appendChild(badge(node.type || "?", "type"));
     if (node.apply) { wrap.appendChild(badge(node.apply, "apply")); }
     if (node.origin && node.origin.kind && node.origin.kind !== "file") {
-      wrap.appendChild(badge(node.origin.kind, "origin"));
+      wrap.appendChild(badge(node.origin.kind, node.origin.kind === "draft" ? "draft" : "origin"));
     }
     if (node.exists === false) { wrap.appendChild(badge(node.default_applied ? "default" : "absent", "absent")); }
     if (node.field && node.field.read_only) { wrap.appendChild(badge("read-only", "lock")); }
@@ -790,9 +897,14 @@
     return wrap;
   };
 
+  /* A node is pending when a staged operation names it; a new entry of an array
+   * is named by the append token in the add but by its index in the view. */
   TreeEditor.prototype._pendingFor = function (path) {
+    var self = this;
     return this.pending.some(function (item) {
-      return item.operation.path === path || item.operation.from === path;
+      var operation = item.operation;
+      return operation.path === path || operation.from === path ||
+        (operation.op === "add" && self._resolvedAddPath(item) === path);
     });
   };
 
@@ -1337,8 +1449,11 @@
     }
     var reset = this._defaultControl(node);
     if (reset) { wrap.appendChild(reset); }
-    if (caps.add) {
-      wrap.appendChild(this._addItemControl(node, !!(node.field && node.field.children_options)));
+    if (node.exists === false && isComposite(node)) {
+      wrap.appendChild(this._button("add", "Create this " + node.type,
+        "plus", function () { self.stageOperations([{ op: "set", path: node.path, value_text: self._newEntryText(node.field, 0) }], "user"); }));
+    } else if (caps.add) {
+      wrap.appendChild(this._addItemControl(node));
     }
     if (caps.remove && (node.kind === "array_item" || node.type === "array")) {
       wrap.appendChild(this._button("remove", node.type === "array" ? "Remove this list" : "Remove this item", "trash", function () {
@@ -1349,19 +1464,54 @@
         wrap.appendChild(this._button("down", "Move down", "arrow-down", function () { self._move(node, 1); }));
       }
     }
-    if (caps.remove_child && node.kind === "object") {
-      wrap.appendChild(this._addPropertyControl(node));
+    if (caps.remove_child && node.type === "object") {
+      var addProperty = this._addPropertyControl(node);
+      if (addProperty) { wrap.appendChild(addProperty); }
     }
     return wrap;
   };
 
-  TreeEditor.prototype._addItemControl = function (node, typed) {
+  TreeEditor.prototype._addItemControl = function (node) {
     var self = this;
+    var options = (node.field && node.field.children_options) || [];
+    var shape = this._itemShape(node);
     var button = this._button("add", "Add an item", "plus", function () {
-      if (!typed) { self._appendItem(node, defaultValueFor(node.field)); return; }
-      self._showItemChooser(node);
+      if (options.length > 1) { self._showItemChooser(node); return; }
+      /* The shape of the item decides the control the new row gets, and a new
+       * object starts as its required children rather than as an empty one. */
+      self._appendItem(node, self._newEntryText(shape, 0));
     });
     return button;
+  };
+
+  /* What a new entry of this container must look like. An array declares the
+   * shape of its items either as a list of options or as a single node under
+   * `children`; an object declares a new property under `additional_children`
+   * or, for a declared key, under its own entry in `children`. */
+  TreeEditor.prototype._itemShape = function (node) {
+    var field = (node && node.field) || null;
+    if (!field) { return null; }
+    if (node.type === "array") {
+      if (field.children_options && field.children_options.length) { return field.children_options[0]; }
+      return this._childNode(field.children);
+    }
+    if (field.additional_children) { return field.additional_children; }
+    return this._childNode(field.children);
+  };
+
+  /* The same rule for a raw declaration, which is what a descriptor file and a
+   * field description both end up as. */
+  TreeEditor.prototype._shapeOfField = function (field, token) {
+    if (!field) { return null; }
+    if (token && field.children && field.children[token]) { return field.children[token]; }
+    return field.additional_children || this._childNode(field.children);
+  };
+
+  /* `children` of an array is one node, of an object a map of nodes; a node
+   * always names its own type. */
+  TreeEditor.prototype._childNode = function (children) {
+    if (!children || typeof children !== "object" || Array.isArray(children)) { return null; }
+    return children.type ? children : null;
   };
 
   TreeEditor.prototype._showItemChooser = function (node) {
@@ -1373,7 +1523,7 @@
     (node.field.children_options || []).forEach(function (option) {
       var button = element("button", { type: "button", text: option.type });
       button.addEventListener("click", function () {
-        self.stageOperations([{ op: "add", path: node.path + "/-", value_text: defaultValueFor(option) }], "user");
+        self.stageOperations([{ op: "add", path: node.path + "/-", value_text: self._newEntryText(option, 0) }], "user");
         chooser.remove();
       });
       chooser.appendChild(button);
@@ -1381,37 +1531,154 @@
     this.toolbar.appendChild(chooser);
   };
 
+  /* The append token names no index, but a child of the new entry is written by
+   * its own path, so the view needs the index the entry will have: the length of
+   * the array in the file, minus what this batch removes, plus what it adds. */
+  TreeEditor.prototype._nextIndex = function (arrayPath) {
+    var node = this._find(arrayPath);
+    var stored = node && node.items ? node.items.length : 0;
+    var added = 0;
+    var removed = 0;
+    this.pending.forEach(function (item) {
+      var op = item.operation;
+      if (!op.path) { return; }
+      var parent = op.path.slice(0, op.path.lastIndexOf("/"));
+      if (parent !== arrayPath) { return; }
+      if (op.op === "add") { added += 1; }
+      if (op.op === "remove") { removed += 1; }
+    });
+    return Math.max(0, stored - removed) + added - 1;
+  };
+
+  TreeEditor.prototype._resolveAddPath = function (path) {
+    if (!path) { return path; }
+    var token = path.slice(path.lastIndexOf("/") + 1);
+    if (token !== "-" && token !== "*") { return path; }
+    return path.slice(0, path.lastIndexOf("/")) + "/" + this._nextIndex(path.slice(0, path.lastIndexOf("/")));
+  };
+
+  /* The concrete index of one staged append: the array length in the file,
+   * minus staged removals, plus its position among the staged appends. Several
+   * appends to the same array must each get a distinct index. */
+  TreeEditor.prototype._addIndex = function (parentPath, target) {
+    var node = this._find(parentPath);
+    var stored = node && node.items ? node.items.length : 0;
+    var removed = 0;
+    var ordinal = -1;
+    var seen = 0;
+    this.pending.forEach(function (item) {
+      var op = item.operation;
+      if (!op.path) { return; }
+      var parent = op.path.slice(0, op.path.lastIndexOf("/"));
+      if (parent !== parentPath) { return; }
+      if (op.op === "remove") { removed += 1; }
+      if (op.op === "add") {
+        if (item === target) { ordinal = seen; }
+        seen += 1;
+      }
+    });
+    if (ordinal < 0) { return null; }
+    return Math.max(0, stored - removed) + ordinal;
+  };
+
+  TreeEditor.prototype._resolvedAddPath = function (item) {
+    var op = item && item.operation;
+    if (!op || !op.path) { return op ? op.path : ""; }
+    var token = op.path.slice(op.path.lastIndexOf("/") + 1);
+    if (token !== "-" && token !== "*") { return op.path; }
+    var parentPath = op.path.slice(0, op.path.lastIndexOf("/"));
+    var index = this._addIndex(parentPath, item);
+    return index === null ? op.path : parentPath + "/" + index;
+  };
+
+  /* The value a new object entry starts with: empty. A new entry shows every
+   * declared fixed child (see _visibleChildren), and only the fields the user
+   * fills in are written, each by its own path. Required fields are not
+   * pre-filled: the candidate stays invalid until the user supplies them. */
+  TreeEditor.prototype._newEntryText = function (shape, indent) {
+    if (!shape || shape.type !== "object") { return defaultValueFor(shape); }
+    return "{}";
+  };
+
   TreeEditor.prototype._appendItem = function (node, valueText) {
     this.stageOperations([{ op: "add", path: node.path + "/-", value_text: valueText }], "user");
   };
 
-  TreeEditor.prototype._addPropertyControl = function (node) {
-    var self = this;
+  /* An object the user names by itself: it declares what a value looks like
+   * (`additional_children`), a pattern or a closed list of keys. An object with
+   * declared children needs no key field, so it gets no "add property" control
+   * at all. */
+  TreeEditor.prototype._keyedObject = function (node) {
+    if (!node || node.type !== "object") { return false; }
+    var field = node.field || {};
     var caps = node.capabilities || {};
-    if (caps.key_options && caps.key_options.length) {
-      var select = element("select", { "aria-label": "New key for " + node.path, class: "aiset-tree-key" });
-      select.appendChild(element("option", { value: "", text: "add property…" }));
-      caps.key_options.forEach(function (key) {
-        select.appendChild(element("option", { value: key, text: key }));
-      });
-      select.addEventListener("change", function () {
-        if (!select.value) { return; }
-        self.stageOperations([{ op: "add", path: node.path + "/" + escapeToken(select.value), value_text: defaultValueFor(node.additional_child) }], "user");
-        select.value = "";
-      });
+    return !!(field.additional_children || field.key_pattern || field.key_enum ||
+      (caps.key_options && caps.key_options.length));
+  };
+
+  /* Rename or name a child. A name is a path segment, so changing it writes the
+   * new entry and drops the old one; an empty name drops both again. */
+  TreeEditor.prototype._keyControl = function (node, parent) {
+    var self = this;
+    var parentPath = parent.path;
+    var current = node.path.slice(node.path.lastIndexOf("/") + 1);
+    var options = (parent.capabilities || {}).key_options || [];
+    /* Enter and the following blur/change can both fire; a name must be
+     * committed once, otherwise the same entry is staged twice. */
+    var committed = false;
+    var commit = function (next) {
+      if (committed) { return; }
+      committed = true;
+      next = String(next === undefined || next === null ? "" : next).trim();
+      if (node.draft) {
+        delete self.keyDrafts[parentPath];
+        self._render();
+        if (!next) { self._render(); return; }
+        self.stageOperations([{ op: "add", path: parentPath + "/" + escapeToken(next),
+          value_text: self._newEntryText(self._itemShape(parent), 0) }], "user");
+        return;
+      }
+      if (!next || next === current) { return; }
+      var text = node.exists === false ? self._newEntryText(node.field, 0) : node.value_text;
+      self.stageOperations([
+        { op: "remove", path: parentPath + "/" + escapeToken(current) },
+        { op: "add", path: parentPath + "/" + escapeToken(next), value_text: text },
+      ], "user");
+    };
+    var title = node.draft ? "Name this entry; an empty name closes the row"
+      : "Key of " + node.path + "; changing it renames the entry";
+    if (options.length) {
+      var select = element("select", { class: "aiset-tree-key", "aria-label": title, title: title });
+      if (node.draft) { select.appendChild(element("option", { value: "", text: "…" })); }
+      options.forEach(function (key) { select.appendChild(element("option", { value: key, text: key })); });
+      if (current && options.indexOf(current) < 0) {
+        select.appendChild(element("option", { value: current, text: current }));
+      }
+      select.value = current;
+      select.addEventListener("change", function () { commit(select.value); });
       return select;
     }
-    var input = element("input", {
-      type: "text", class: "aiset-tree-key", "aria-label": "New key for " + node.path,
-      placeholder: caps.key_pattern || "key"
-    });
+    var input = element("input", { type: "text", class: "aiset-tree-key", value: current || "",
+      "aria-label": title, title: title, placeholder: node.draft ? "name it" : "key",
+      disabled: !!node.pending_delete });
+    if (node.pending_delete) { input.title = "This entry is marked for removal; revert it to rename it"; }
+    input.addEventListener("change", function () { commit(input.value); });
     input.addEventListener("keydown", function (event) {
-      if (event.key !== "Enter" || !input.value) { return; }
-      self.stageOperations([{ op: "add", path: node.path + "/" + escapeToken(input.value),
-                              value_text: defaultValueFor(node.additional_child) }], "user");
-      input.value = "";
+      if (event.key === "Enter") { commit(input.value); }
+      if (event.key === "Escape") { input.value = current; }
     });
     return input;
+  };
+
+  /* Only an object the user names by itself offers to add an entry: without a
+   * declared value shape there is nothing a new key could hold. */
+  TreeEditor.prototype._addPropertyControl = function (node) {
+    var self = this;
+    if (!this._keyedObject(node)) { return null; }
+    return this._button("add", "Add a new entry with its own key", "plus", function () {
+      if (self.keyDrafts[node.path]) { delete self.keyDrafts[node.path]; } else { self.keyDrafts[node.path] = true; }
+      self._render();
+    });
   };
 
   TreeEditor.prototype._move = function (node, direction) {

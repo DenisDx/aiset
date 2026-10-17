@@ -1,4 +1,8 @@
 //this is an override config for the section conf2 from the main config.json5
+//AGENT: testobjarray and testobjobj below are typed by typedefvalue1, declared
+//in this folder's descriptor.json5 and imported by the main descriptor, so the
+//override can never describe a different shape. The base array wins as a whole;
+//of testobjobj the base keeps its own values and takes this key from here.
 {
     value1: "override",
     value2: [1,2,3],
@@ -23,5 +27,29 @@
         },
         subValue5: ["yet another sub value 2","additional sub value 2"]
 
+    },
+    testobjarray: [
+        {
+            subValue1: "override item",
+            subValue2: 99,
+            subValue3: true,
+            subValue4: {
+                innerSubValue1: "override inner"
+            },
+            subValue5: ["override item"]
+        }
+    ],
+    testobjobj: {
+        shared: {
+            subValue1: "override shared",
+            subValue4: {
+                innerSubValue1: "override inner"
+            }
+        },
+        extra: {
+            subValue1: "only the override has this key",
+            subValue2: 31,
+            subValue5: ["extra"]
+        }
     }
 }

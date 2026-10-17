@@ -404,6 +404,38 @@ generated forms/helpers, AI) are out of scope and reported as explicit
   quotes, a field the descriptor converts stays a bare token — so changing a
   default and returning it clears dirty, an enum behind a placeholder clears too,
   and applying a change no longer drifts the source form of the file.
+- 2026-10-16. Adding an entry to an array uses the shape the descriptor
+  declares. `describe()` now returns the item node of an array under
+  `children`, which is how a descriptor writes it, so the tree and the node
+  route finally tell a client what a new entry must look like. The editor reads
+  that shape once, in `_itemShape`, for both the `+` button and the new row, so
+  `value2` (an array of ints) offers a number field with 0 instead of a free text
+  field holding `[]`. A value typed into a new row updates the staged `add`
+  itself: the service accepts the append token on an add only, so the two must
+  never become two operations.
+- 2026-10-16. A template now also resolves in the position SPEC.md 4.6.10
+  already allows but the compiler skipped: the single node that describes every
+  item of an array. `expand_templates` walks that node like any other, so
+  `children: { type: "typedefvalue1" }` yields real objects carrying the
+  template's children, its constraints and its helper binding. The conf2
+  templates grew accordingly: the edit form of `typedefvalue1` is described
+  (helper binding plus `ui` label, help and placeholder per field), and two
+  structures use the template as a type — `testobjarray`, an array whose items
+  are such objects, and `testobjobj`, an object whose every value is one by key.
+  The main descriptor declares the same two keys through the imported template,
+  and both demo2 configurations carry matching values: the base array wins as a
+  whole, while of `testobjobj` the base keeps its own values and takes the added
+  key and the inner field the base lacks.
+- 2026-10-16. Creating a child of a collection builds the tree the descriptor
+  declares instead of one empty value. A new object starts as its required
+  children (`const`, then `default`, then the empty value of the type), the rest
+  stays unwritten but visible with the show-absent option, and everything under a
+  new entry is addressed by the index or key it will have — the service accepts
+  the append token on an `add` only, so a child of a new array entry is a `set`
+  on its resolved index. An object the user names by itself shows the key where
+  the name stood, in front of the value: it renames the entry, and `+` opens a
+  row that waits for its name. The old free-standing "key" field is gone; it
+  appeared on objects that had nothing to name and always wrote `null`.
 - 2026-10-15. M2/M4 work deliberately not started: MCP adapter, hook
   dispatcher, helper micro-forms, history/restore, and a general agent
   framework. Recognized hook bindings are refused at write time with

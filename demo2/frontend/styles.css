@@ -295,3 +295,6 @@ input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
   font-family: inherit; font-size: 13px;
 }
 .chat-actions { display: flex; gap: 8px; margin-top: 6px; }
+/* A row that is only waiting for its name is not part of the file yet. */
+.aiset-tree-badge.draft { color: var(--muted); border-color: var(--muted); font-style: italic; }
+.aiset-tree-node.is-deleted .aiset-tree-key { text-decoration: line-through; }

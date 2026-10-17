@@ -255,6 +255,11 @@ class Node:
                 out["env"]["convert"] = self.env_convert
         if self.children:
             out["children"] = {name: node.describe() for name, node in self.children.items()}
+        if self.item_node is not None and self.type == "array":
+            # An array describes every item with a single node. A client needs
+            # that shape to offer the right control for a new entry, and the
+            # descriptor itself is written exactly this way.
+            out["children"] = self.item_node.describe()
         if self.option_nodes:
             out["children_options"] = [option.describe() for option in self.option_nodes]
         if self.additional_children is not None:
@@ -816,10 +821,15 @@ def expand_templates(data: Any, templates: dict[str, dict], path: str = "") -> A
         node = _merge_template(expand_templates(base, templates, path), node)
     children = node.get("children")
     if isinstance(children, dict):
-        node["children"] = {
-            label: expand_templates(child, templates, f"{path}/children/{label}")
-            for label, child in children.items()
-        }
+        if node.get("type") == "array" and is_item_node(children):
+            # An array describes every item with a single node, so a template
+            # named there resolves like any other node position (SPEC.md 4.6.10).
+            node["children"] = expand_templates(children, templates, f"{path}/children")
+        else:
+            node["children"] = {
+                label: expand_templates(child, templates, f"{path}/children/{label}")
+                for label, child in children.items()
+            }
     if isinstance(node.get("additional_children"), dict):
         node["additional_children"] = expand_templates(
             node["additional_children"], templates, f"{path}/additional_children"

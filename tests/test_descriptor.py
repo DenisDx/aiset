@@ -243,6 +243,40 @@ def test_typedef_sources_are_available():
     assert descriptor.root.children["workers"].additional_children.type == "object"
 
 
+def test_a_template_resolves_as_the_item_of_an_array():
+    """A template is a node wherever a node is written, including the single
+    node that describes every item of an array (SPEC.md 4.6.10)."""
+    source = """
+    { descriptor_version: "1.0", root: { type: "object", children: {
+        card: { typedef: "card", type: "object", description: "card",
+                helper: { tag: "node_form", actions: ["edit"], presentation: "modal" },
+                children: { n: { type: "int", minimum: 1 } } },
+        cards: { type: "array", children: { type: "card", description: "One card" } },
+        named: { type: "object", additional_children: { type: "card" } },
+    } } }
+    """
+    descriptor = compile_descriptor(source, strict=True)
+    item = descriptor.root.children["cards"].item_node
+    assert item.type == "object"
+    assert item.description == "One card"          # the referencing node wins
+    assert sorted(item.children) == ["n"]          # the template supplied the shape
+    assert item.children["n"].minimum == 1
+    assert item.helper["tag"] == "node_form"       # and the edit form travelled with it
+    named = descriptor.root.children["named"].additional_children
+    assert named.type == "object" and sorted(named.children) == ["n"]
+
+
+def test_an_array_item_may_not_be_a_label_map():
+    source = """
+    { descriptor_version: "1.0", root: { type: "object", children: {
+        rows: { type: "array", children: { first: { type: "int" }, second: { type: "int" } } } } } }
+    """
+    with pytest.raises(InvalidDescriptor) as error:
+        compile_descriptor(source, strict=True)
+    assert any("array children must be a single node" in issue["message"]
+               for issue in error.value.issues)
+
+
 def test_fragment_composition_mounts_at_the_path():
     base = """
     { descriptor_version: "1.0", root: { type: "object", children: { base: { type: "string" } } } }

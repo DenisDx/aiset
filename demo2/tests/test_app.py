@@ -394,6 +394,9 @@ def test_component_document_merges_with_the_base_in_front(started):
         "/value4",
         "/typedefvalue1/subValue4/innerSubValue1",
         "/typedefvalue2/subValue4/innerSubValue1",
+        # the typed structures: one nested value and one key only in the update
+        "/testobjobj/shared/subValue4/innerSubValue1",
+        "/testobjobj/extra",
     }
     assert "/value1" in result["from_update"], "the update would have won under the old rule"
     assert "includes" in config.read_text(encoding="utf-8"), "the base file is not overwritten"
@@ -425,6 +428,124 @@ def test_main_descriptor_uses_the_shared_typedefs(started):
     assert node.type == "object", "the template is expanded into a real object"
     assert set(node.children) == {"subValue1", "subValue2", "subValue3", "subValue4", "subValue5"}
     assert node.helper["tag"] == "node_form", "the helper binding travels with the template"
+
+
+def test_the_shared_template_types_an_array_and_an_object(started):
+    """The template is used as the type of array items and of object values."""
+    host, _config, _descriptor, _env = started
+    descriptor = host.service.documents["demo2"].descriptor
+    conf2 = descriptor.root.children["includes"].children["conf2"]
+
+    items = conf2.children["testobjarray"]
+    assert items.type == "array"
+    assert items.item_node is not None, "the array declares the shape of its items"
+    assert items.item_node.type == "object", "an item resolves to the template"
+    assert set(items.item_node.children) == {"subValue1", "subValue2", "subValue3", "subValue4", "subValue5"}
+    assert items.item_node.helper["tag"] == "node_form", "an item opens the form of the template"
+
+    values = conf2.children["testobjobj"]
+    assert values.type == "object"
+    assert values.additional_children is not None, "every key holds that template"
+    assert values.additional_children.type == "object"
+    assert set(values.additional_children.children) == set(items.item_node.children)
+
+
+def test_the_typed_structures_validate_and_reach_the_tree(started):
+    from app import merged_override
+
+    host, _config, _descriptor, _env = started
+    service = host.service
+    loaded = service.load("demo2", principal=Principal.demo())
+    result = service.apply_operations(
+        "demo2",
+        [
+            {"op": "set", "path": "/includes/conf2/testobjobj/shared/subValue2", "value_text": "22"},
+            {"op": "add", "path": "/includes/conf2/testobjobj/fresh",
+             "value_text": "{\n  subValue1: \"a new key\",\n  subValue2: 5\n}\n"},
+        ],
+        expected_revision=loaded.revision,
+        expected_descriptor_revision=loaded.descriptor_revision,
+        principal=Principal.demo(),
+        dry_run=True,
+    )
+    assert result.dry_run is True, "nothing is written by a dry run"
+    assert result.valid is True, [issue.message for issue in result.issues]
+
+    tree = service.tree("demo2", "/includes/conf2/testobjarray/0", principal=Principal.demo())
+    assert tree["node"]["type"] == "object"
+    assert [child["path"].rsplit("/", 1)[-1] for child in tree["node"]["children"]][:2] == ["subValue1", "subValue2"]
+    assert tree["node"]["field"]["helper"]["tag"] == "node_form"
+    assert tree["node"]["children"][0]["field"]["ui"]["label"] == "Text", "the form fields are described"
+
+    merged = merged_override(host)["merged"]
+    assert [item["subValue1"] for item in merged["testobjarray"]] == ["base item one", "base item two"], (
+        "an array present in both keeps the base, element types included"
+    )
+    assert merged["testobjobj"]["shared"]["subValue1"] == "base shared", "the base keeps its own values"
+    assert merged["testobjobj"]["shared"]["subValue4"]["innerSubValue1"] == "override inner", (
+        "a value only in the update is taken"
+    )
+    assert merged["testobjobj"]["extra"]["subValue1"] == "only the override has this key", (
+        "a key only in the update is taken as a whole"
+    )
+
+
+def test_a_new_typed_entry_is_created_with_its_required_fields(started):
+    """Adding an entry of testobjarray/testobjobj needs only the required child."""
+    host, _config, _descriptor, _env = started
+    service = host.service
+    loaded = service.load("demo2", principal=Principal.demo())
+
+    def check(operations):
+        return service.apply_operations(
+            "demo2", operations,
+            expected_revision=loaded.revision,
+            expected_descriptor_revision=loaded.descriptor_revision,
+            principal=Principal.demo(), dry_run=True,
+        )
+
+    # What the editor stages for "+" on an array of templated items: an empty
+    # object, then only the fields the user actually filled in.
+    result = check([
+        {"op": "add", "path": "/includes/conf2/testobjarray/-", "value_text": "{}"},
+        {"op": "set", "path": "/includes/conf2/testobjarray/2/subValue1", "value_text": "\"typed\""},
+        {"op": "set", "path": "/includes/conf2/testobjarray/2/subValue2", "value_text": "33"},
+    ])
+    assert result.valid is True, [issue.message for issue in result.issues]
+
+    # And for a new key of an object whose values are templated objects.
+    result = check([
+        {"op": "add", "path": "/includes/conf2/testobjobj/second", "value_text": "{}"},
+        {"op": "set", "path": "/includes/conf2/testobjobj/second/subValue1", "value_text": "\"typed\""},
+        {"op": "set", "path": "/includes/conf2/testobjobj/second/subValue4", "value_text": "{}"},
+        {"op": "set", "path": "/includes/conf2/testobjobj/second/subValue4/innerSubValue1",
+         "value_text": "\"inner\""},
+        {"op": "set", "path": "/includes/conf2/testobjobj/second/subValue5", "value_text": "[]"},
+        {"op": "add", "path": "/includes/conf2/testobjobj/second/subValue5/-", "value_text": "\"item\""},
+    ])
+    assert result.valid is True, [issue.message for issue in result.issues]
+
+    # A name is a path segment, so renaming drops the old key and writes the new.
+    result = check([
+        {"op": "remove", "path": "/includes/conf2/testobjobj/shared"},
+        {"op": "add", "path": "/includes/conf2/testobjobj/renamed",
+         "value_text": "{\n  subValue1: \"renamed\"\n}"},
+    ])
+    assert result.valid is True, [issue.message for issue in result.issues]
+
+
+def test_only_required_children_of_the_templates_are_written(started):
+    """An entry starts as its required fields; the rest stays unwritten."""
+    host, _config, _descriptor, _env = started
+    descriptor = host.service.documents["demo2"].descriptor
+    conf2 = descriptor.root.children["includes"].children["conf2"]
+    shape = conf2.children["testobjobj"].additional_children
+    required = [name for name, node in shape.children.items() if node.required]
+    optional = [name for name, node in shape.children.items() if not node.required]
+    assert required == ["subValue1"], "one identity field is required, as the demo declares it"
+    assert optional == ["subValue2", "subValue3", "subValue4", "subValue5"]
+    item = conf2.children["testobjarray"].item_node
+    assert item.children["subValue1"].required is True, "every item of the array needs the same field"
 
 
 def test_status_reports_both_documents_and_the_override(started):
