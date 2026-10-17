@@ -842,6 +842,78 @@ state is shared between instances through module globals. `renderFullEditor()`
 is the generated tree editor; `renderNodeEditor()` remains the single path/value
 editor of section 17.
 
+### 21.1 Emitted classes
+
+The editor emits a fixed set of class names, all prefixed `aiset-`. They are the
+contract a host stylesheet targets, so they are listed here, exported as data by
+`aiset.classes()` (`{name, element, role, required}`), and checked against the
+source by a library test: the specification, the export and the source are three
+views of one list.
+
+`Required: yes` marks the classes a host must style for the tree to be readable;
+the rest is optional polish (AGENT_INTEGRATION.md section 8a).
+
+| Class | Element | Role | Required |
+|---|---|---|---|
+| `aiset-tree-editor` | div | root | yes |
+| `aiset-tree-toolbar` | div | toolbar | yes |
+| `aiset-tree` | div | tree | yes |
+| `aiset-tree-node` | div | structure | yes |
+| `aiset-tree-row` | div | structure | yes |
+| `aiset-tree-children` | div | structure | yes |
+| `aiset-tree-desc` | div | structure | no |
+| `aiset-tree-toggle` | button | control | yes |
+| `aiset-tree-toggle-type` | span | control | no |
+| `aiset-tree-type` | span | badge | no |
+| `aiset-tree-name` | span | text | yes |
+| `aiset-tree-badges` | span | badge | no |
+| `aiset-tree-badge` | span | badge | no |
+| `aiset-tree-value` | span | control | yes |
+| `aiset-tree-value-readonly` | span | control | no |
+| `aiset-tree-key` | input | control | no |
+| `aiset-tree-null` | input | control | no |
+| `aiset-tree-actions` | span | action | no |
+| `aiset-tree-action` | button | action | no |
+| `aiset-tree-env` | input | control | no |
+| `aiset-tree-env-state` | button | action | no |
+| `aiset-tree-template` | span | control | no |
+| `aiset-tree-secret` | span | text | no |
+| `aiset-tree-source` | div | control | no |
+| `aiset-tree-raw` | div | control | no |
+| `aiset-tree-raw-title` | div | text | no |
+| `aiset-tree-raw-text` | textarea | control | no |
+| `aiset-tree-raw-actions` | div | action | no |
+| `aiset-tree-shape` | select | control | no |
+| `aiset-tree-union` | span | control | no |
+| `aiset-tree-chooser` | span | action | no |
+| `aiset-tree-pending` | div | structure | yes |
+| `aiset-tree-staged` | ul | structure | no |
+| `aiset-tree-staged-row` | li | structure | no |
+| `aiset-tree-staged-op` | span | text | no |
+| `aiset-tree-staged-path` | span | text | no |
+| `aiset-tree-staged-source` | span | text | no |
+| `aiset-tree-status` | div | status | yes |
+| `aiset-tree-issues` | ul | status | yes |
+| `aiset-tree-view` | button | action | no |
+| `aiset-tree-lifecycle` | button | action | no |
+| `aiset-tree-button` | button | action | no |
+| `aiset-tree-apply` | button | action | no |
+| `aiset-tree-reload` | button | action | no |
+| `aiset-tree-revert` | button | action | no |
+| `aiset-tree-icon` | svg | icon | no |
+| `aiset-tree-icon-text` | span | icon | no |
+| `aiset-form` | div | form | no |
+| `aiset-form-title` | div | form | no |
+| `aiset-form-row` | div | form | no |
+| `aiset-form-label` | label | form | no |
+| `aiset-form-field` | span | form | no |
+| `aiset-form-control` | input | form | no |
+| `aiset-form-actions` | div | form | no |
+
+Node state is carried on the node element, never on the row:
+`.aiset-tree-node[data-absent="true"]`, `.aiset-tree-node.is-staged` and
+`.aiset-tree-node.is-deleted`.
+
 ## 22. Maintenance and change control
 
 - This document is the authoritative interface specification for aiset. It is

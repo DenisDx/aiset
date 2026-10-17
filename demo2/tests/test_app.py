@@ -281,7 +281,8 @@ def test_frontend_and_assets_are_served(started):
     host = started[0]
     app = host_app(host, DEMO2 / "frontend")
     for path, needle in (("/", b"aiset settings host"), ("/app.js", b"mountTree"),
-                         ("/styles.css", b"--accent"), ("/assets/aiset-tree.js", b"renderTreeEditor")):
+                         ("/styles.css", b"--accent"), ("/assets/aiset-tree.js", b"renderTreeEditor"),
+                         ("/assets/aiset-host-theme.css", b"--aiset-accent")):
         environ = {"REQUEST_METHOD": "GET", "PATH_INFO": path, "QUERY_STRING": "", "wsgi.input": BytesIO(b"")}
         captured: dict = {}
 

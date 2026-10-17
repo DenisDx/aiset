@@ -155,12 +155,13 @@ def test_page_boots_with_the_shipped_scripts(node, tmp_path):
 
 def test_page_loads_the_shipped_assets_in_order(node):
     html = (DEMO2 / "frontend" / "index.html").read_text(encoding="utf-8")
-    order = [html.index("/assets/aiset.css"), html.index("/assets/aiset.js"),
+    order = [html.index("/assets/aiset.css"), html.index("/assets/aiset-host-theme.css"),
+             html.index("/styles.css"), html.index("/assets/aiset.js"),
              html.index("/assets/aiset-tree.js"), html.index("/app.js")]
     assert order == sorted(order), "assets must load in dependency order"
-    for src in ("/assets/aiset.css", "/assets/aiset.js", "/assets/aiset-tree.js", "/app.js"):
+    for src in ("/assets/aiset.css", "/assets/aiset-host-theme.css", "/styles.css",
+                "/assets/aiset.js", "/assets/aiset-tree.js", "/app.js"):
         assert src in html
-    assert "/styles.css" in html
     assert 'id="settings-tree"' in html and 'id="chat-history"' in html
     assert 'id="tree-values-text"' in html, "the pane must offer the values-as-text switch"
     assert 'id="tree-show-absent"' in html, "the pane must offer the show-absent switch"
@@ -168,7 +169,7 @@ def test_page_loads_the_shipped_assets_in_order(node):
 
 def test_stylesheet_themes_every_value_control():
     """Number inputs were never themed, so int fields stayed white."""
-    css = (DEMO2 / "frontend" / "styles.css").read_text(encoding="utf-8")
+    css = (ROOT / "src" / "aiset" / "assets" / "aiset-host-theme.css").read_text(encoding="utf-8")
     for selector in ('input[type="text"]', 'input[type="number"]', 'textarea', 'select'):
         assert selector in css, f"{selector} must be part of the demo2 palette"
     assert ".aiset-tree-action" in css, "square icon buttons need a size"

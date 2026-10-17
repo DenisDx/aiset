@@ -1,9 +1,43 @@
-/* aiset editor styling: neutral, framework-free, no external dependency. */
+/* aiset editor styling: neutral, framework-free, no external dependency.
+ *
+ * Ownership (AGENT_INTEGRATION.md section 8a.8): the library owns structure and
+ * behaviour; the host owns appearance. Everything visual is routed through the
+ * `--aiset-*` custom properties below, so a host theme is a variable block, not
+ * a specificity contest. The structural rules (row layout, tree indent, the
+ * description placement) ship here so a host that writes no rules still gets a
+ * readable tree; a host stylesheet loaded after this one overrides any of them.
+ */
+
+:root {
+  /* palette (light defaults) */
+  --aiset-surface: #f6f8fa;
+  --aiset-surface-strong: #eef1f5;
+  --aiset-input-bg: #ffffff;
+  --aiset-border: #c6ccd4;
+  --aiset-text: #1c1f24;
+  --aiset-text-soft: #4a515b;
+  --aiset-muted: #6b7280;
+  --aiset-accent: #0969da;
+  --aiset-ok: #1a7f37;
+  --aiset-pending: #7a5b00;
+  --aiset-warn: #8a5a00;
+  --aiset-err: #b42318;
+  /* type-mark palette: a choice, not a fact */
+  --aiset-type-int: #1a7f37;
+  --aiset-type-string: #0969da;
+  --aiset-type-bool: #7c3aed;
+  --aiset-type-other: #6b7280;
+  /* structural tunables */
+  --aiset-indent: 14px;
+  --aiset-guide: 1px;
+  --aiset-row-gap: 8px;
+  --aiset-row-pad: 3px 6px;
+}
 
 .aiset-editor {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
-  color: #1c1f24;
+  color: var(--aiset-text);
   max-width: 1100px;
 }
 
@@ -23,7 +57,7 @@
 .aiset-document {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   padding: 4px 6px;
-  border: 1px solid #c6ccd4;
+  border: 1px solid var(--aiset-border);
   border-radius: 4px;
   min-width: 240px;
 }
@@ -34,25 +68,25 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   padding: 8px;
-  border: 1px solid #c6ccd4;
+  border: 1px solid var(--aiset-border);
   border-radius: 4px;
   white-space: pre;
 }
 
 .aiset-field {
   margin: 6px 0;
-  color: #4a515b;
+  color: var(--aiset-text-soft);
   font-size: 13px;
 }
 
 .aiset-field[data-read-only="true"] {
-  color: #8a5a00;
+  color: var(--aiset-warn);
   font-weight: 600;
 }
 
 .aiset-hint {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--aiset-muted);
   margin-bottom: 6px;
 }
 
@@ -63,25 +97,48 @@
 }
 
 .aiset-status[data-state="ok"] {
-  color: #1a7f37;
+  color: var(--aiset-ok);
 }
 
 .aiset-status[data-state="error"] {
-  color: #b42318;
+  color: var(--aiset-err);
 }
 
 .aiset-status[data-state="pending"] {
-  color: #7a5b00;
+  color: var(--aiset-pending);
 }
 
 .aiset-issues {
   margin: 8px 0 0;
   padding-left: 18px;
-  color: #b42318;
+  color: var(--aiset-err);
   font-size: 13px;
 }
-/* -- tree editor primitives ---------------------------------------------
- * Neutral defaults; a host stylesheet may override every one of them. */
+
+/* -- tree editor: structure (the library owns this) --------------------- */
+
+.aiset-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--aiset-row-gap);
+  padding: var(--aiset-row-pad);
+  flex-wrap: wrap;
+}
+
+.aiset-tree-children {
+  margin-left: calc(var(--aiset-indent) - 1px);
+  padding-left: var(--aiset-indent);
+  border-left: var(--aiset-guide) solid var(--aiset-border);
+}
+
+.aiset-tree-desc {
+  padding-left: 30px;
+  margin-bottom: 2px;
+  font-size: 12px;
+  color: var(--aiset-muted);
+}
+
+/* -- tree editor: appearance (a host overrides these) ------------------- */
 
 .aiset-tree-actions { display: inline-flex; align-items: center; gap: 2px; }
 
@@ -92,14 +149,14 @@
   height: 24px;
   min-width: 24px;
   padding: 0;
-  color: #4a515b;
+  color: var(--aiset-text-soft);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 4px;
   cursor: pointer;
 }
 
-.aiset-tree-action:hover { color: #1c1f24; background: #eef1f5; border-color: #c6ccd4; }
+.aiset-tree-action:hover { color: var(--aiset-text); background: var(--aiset-surface-strong); border-color: var(--aiset-border); }
 .aiset-tree-action .aiset-tree-icon { width: 14px; height: 14px; display: block; }
 
 .aiset-tree-source {
@@ -107,16 +164,16 @@
   padding: 6px 8px;
   max-height: 320px;
   overflow: auto;
-  color: #1c1f24;
-  background: #f6f8fa;
-  border: 1px solid #c6ccd4;
+  color: var(--aiset-text);
+  background: var(--aiset-surface);
+  border: 1px solid var(--aiset-border);
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   white-space: pre;
 }
 
-.aiset-tree-node[data-absent="true"] .aiset-tree-name { color: #8a5a00; font-style: italic; }
+.aiset-tree-node[data-absent="true"] .aiset-tree-name { color: var(--aiset-warn); font-style: italic; }
 
 .aiset-tree-type {
   display: inline-grid;
@@ -130,12 +187,12 @@
   font-size: 11px;
   line-height: 1;
 }
-.aiset-tree-type.int, .aiset-tree-type.number { color: #1a7f37; }
-.aiset-tree-type.string { color: #0969da; }
-.aiset-tree-type.bool { color: #7c3aed; }
-.aiset-tree-type.other, .aiset-tree-type.container { color: #6b7280; }
+.aiset-tree-type.int, .aiset-tree-type.number { color: var(--aiset-type-int); }
+.aiset-tree-type.string { color: var(--aiset-type-string); }
+.aiset-tree-type.bool { color: var(--aiset-type-bool); }
+.aiset-tree-type.other, .aiset-tree-type.container { color: var(--aiset-type-other); }
 
-.aiset-tree-null { accent-color: #7c3aed; width: 14px; height: 14px; margin: 0; vertical-align: middle; cursor: pointer; }
+.aiset-tree-null { accent-color: var(--aiset-type-bool); width: 14px; height: 14px; margin: 0; vertical-align: middle; cursor: pointer; }
 .aiset-tree-value :disabled { opacity: 0.7; cursor: not-allowed; font-style: italic; }
 
 .aiset-tree-action:disabled { opacity: 0.4; cursor: default; }
@@ -143,11 +200,11 @@
 
 .aiset-tree-env { width: 170px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .aiset-tree-template { display: inline-flex; align-items: center; gap: 6px; }
-.aiset-tree-env-state { font-size: 11px; color: #6b7280; white-space: nowrap; }
-.aiset-tree-env-state.on { color: #1a7f37; }
-.aiset-tree-raw { margin: 4px 0 6px 30px; padding: 8px; border: 1px solid #0969da; border-radius: 4px; background: #f6f8fa; }
-.aiset-tree-raw-title { color: #6b7280; font-size: 11px; margin-bottom: 6px; }
-.aiset-tree-raw-text { width: 100%; box-sizing: border-box; min-height: 120px; padding: 6px; border: 1px solid #c6ccd4; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.aiset-tree-env-state { font-size: 11px; color: var(--aiset-muted); white-space: nowrap; }
+.aiset-tree-env-state.on { color: var(--aiset-ok); }
+.aiset-tree-raw { margin: 4px 0 6px 30px; padding: 8px; border: 1px solid var(--aiset-accent); border-radius: 4px; background: var(--aiset-surface); }
+.aiset-tree-raw-title { color: var(--aiset-muted); font-size: 11px; margin-bottom: 6px; }
+.aiset-tree-raw-text { width: 100%; box-sizing: border-box; min-height: 120px; padding: 6px; border: 1px solid var(--aiset-border); border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .aiset-tree-raw-actions { display: flex; gap: 8px; margin-top: 6px; }
 
 .aiset-tree-icon-text {
@@ -162,27 +219,27 @@
   color: inherit;
 }
 
-.aiset-tree-action.pill { width: auto; min-width: 0; height: 22px; padding: 0 7px; background: #f6f8fa; }
+.aiset-tree-action.pill { width: auto; min-width: 0; height: 22px; padding: 0 7px; background: var(--aiset-surface); }
 .aiset-tree-action.pill .aiset-tree-icon-text { width: auto; }
-.aiset-tree-env-state { font-size: 11px; font-style: italic; color: #6b7280; white-space: nowrap; cursor: help; }
+.aiset-tree-env-state { font-size: 11px; font-style: italic; color: var(--aiset-muted); white-space: nowrap; cursor: help; }
 .aiset-tree-env-state::before { content: "\2022"; margin-right: 4px; }
-.aiset-tree-env-state.on { color: #1a7f37; }
+.aiset-tree-env-state.on { color: var(--aiset-ok); }
 
 .aiset-tree-env-state {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 11px;
-  color: #6b7280;
+  color: var(--aiset-muted);
   white-space: nowrap;
   background: transparent;
-  border: 1px solid #c6ccd4;
+  border: 1px solid var(--aiset-border);
   border-radius: 10px;
   padding: 1px 8px;
   cursor: pointer;
 }
 .aiset-tree-env-state:disabled { opacity: 0.45; cursor: default; }
-.aiset-tree-env-state.on { color: #1a7f37; border-color: #1a7f37; }
+.aiset-tree-env-state.on { color: var(--aiset-ok); border-color: var(--aiset-ok); }
 
 .aiset-form {
   position: fixed;
@@ -193,17 +250,17 @@
   max-width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
   overflow: auto;
-  background: #f6f8fa;
-  color: #1c1f24;
-  border: 1px solid #0969da;
+  background: var(--aiset-surface);
+  color: var(--aiset-text);
+  border: 1px solid var(--aiset-accent);
   border-radius: 6px;
   padding: 14px 16px;
 }
-.aiset-form-title { margin: 0 0 10px; font-size: 12px; color: #0969da; }
+.aiset-form-title { margin: 0 0 10px; font-size: 12px; color: var(--aiset-accent); }
 .aiset-form-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.aiset-form-label { flex: 0 0 190px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #6b7280; }
+.aiset-form-label { flex: 0 0 190px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--aiset-muted); }
 .aiset-form-field { display: inline-flex; align-items: center; gap: 6px; }
-.aiset-form-control { background: #fff; border: 1px solid #c6ccd4; border-radius: 4px; padding: 3px 6px; min-width: 160px; font-size: 12px; }
+.aiset-form-control { background: var(--aiset-input-bg); border: 1px solid var(--aiset-border); border-radius: 4px; padding: 3px 6px; min-width: 160px; font-size: 12px; }
 .aiset-form-actions { display: flex; gap: 8px; margin-top: 12px; }
 
 .aiset-tree-toggle-type {
@@ -224,14 +281,21 @@
   line-height: 1;
 }
 
-.aiset-tree-badge.new { color: #1a7f37; border-color: #1a7f37; }
-.aiset-tree-badge.deleted { color: #b42318; border-color: #b42318; }
+.aiset-tree-badge.new { color: var(--aiset-ok); border-color: var(--aiset-ok); }
+.aiset-tree-badge.deleted { color: var(--aiset-err); border-color: var(--aiset-err); }
 .aiset-tree-node.is-deleted > .aiset-tree-row { opacity: 0.55; }
 .aiset-tree-node.is-deleted > .aiset-tree-row .aiset-tree-name,
 .aiset-tree-node.is-deleted > .aiset-tree-row .aiset-tree-value { text-decoration: line-through; }
-.aiset-tree-node.is-staged > .aiset-tree-row .aiset-tree-name { color: #1a7f37; }
+.aiset-tree-node.is-staged > .aiset-tree-row .aiset-tree-name { color: var(--aiset-ok); }
 
 .aiset-tree-key { min-width: 120px; }
-.aiset-tree-badge.draft { color: #6b7280; border-color: #6b7280; }
+.aiset-tree-badge.draft { color: var(--aiset-muted); border-color: var(--aiset-muted); }
 
-.aiset-tree-badge.draft { color: #6b7280; border-color: #6b7280; font-style: italic; }
+.aiset-tree-badge.draft { color: var(--aiset-muted); border-color: var(--aiset-muted); font-style: italic; }
+
+/* -- focus: the library removes the outline in raw mode, so it restores one */
+.aiset-editor :focus-visible,
+.aiset-tree-editor :focus-visible {
+  outline: 2px solid var(--aiset-accent);
+  outline-offset: 1px;
+}

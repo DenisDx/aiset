@@ -29,6 +29,68 @@
 
   var api = global.aiset || (global.aiset = {});
 
+  /* The class inventory, as data (SPEC_service.md section 21, AGENT_INTEGRATION
+   * section 8a.2). A host styles against these names; a library test compares
+   * this list with the classes the source actually emits, so the two cannot
+   * drift. `required` marks the classes a host must style for the tree to be
+   * readable (structure), as opposed to optional polish. */
+  var CLASS_INVENTORY = [
+    { name: "aiset-tree-editor", element: "div", role: "root", required: true },
+    { name: "aiset-tree-toolbar", element: "div", role: "toolbar", required: true },
+    { name: "aiset-tree", element: "div", role: "tree", required: true },
+    { name: "aiset-tree-node", element: "div", role: "structure", required: true },
+    { name: "aiset-tree-row", element: "div", role: "structure", required: true },
+    { name: "aiset-tree-children", element: "div", role: "structure", required: true },
+    { name: "aiset-tree-desc", element: "div", role: "structure", required: false },
+    { name: "aiset-tree-toggle", element: "button", role: "control", required: true },
+    { name: "aiset-tree-toggle-type", element: "span", role: "control", required: false },
+    { name: "aiset-tree-type", element: "span", role: "badge", required: false },
+    { name: "aiset-tree-name", element: "span", role: "text", required: true },
+    { name: "aiset-tree-badges", element: "span", role: "badge", required: false },
+    { name: "aiset-tree-badge", element: "span", role: "badge", required: false },
+    { name: "aiset-tree-value", element: "span", role: "control", required: true },
+    { name: "aiset-tree-value-readonly", element: "span", role: "control", required: false },
+    { name: "aiset-tree-key", element: "input", role: "control", required: false },
+    { name: "aiset-tree-null", element: "input", role: "control", required: false },
+    { name: "aiset-tree-actions", element: "span", role: "action", required: false },
+    { name: "aiset-tree-action", element: "button", role: "action", required: false },
+    { name: "aiset-tree-env", element: "input", role: "control", required: false },
+    { name: "aiset-tree-env-state", element: "button", role: "action", required: false },
+    { name: "aiset-tree-template", element: "span", role: "control", required: false },
+    { name: "aiset-tree-secret", element: "span", role: "text", required: false },
+    { name: "aiset-tree-source", element: "div", role: "control", required: false },
+    { name: "aiset-tree-raw", element: "div", role: "control", required: false },
+    { name: "aiset-tree-raw-title", element: "div", role: "text", required: false },
+    { name: "aiset-tree-raw-text", element: "textarea", role: "control", required: false },
+    { name: "aiset-tree-raw-actions", element: "div", role: "action", required: false },
+    { name: "aiset-tree-shape", element: "select", role: "control", required: false },
+    { name: "aiset-tree-union", element: "span", role: "control", required: false },
+    { name: "aiset-tree-chooser", element: "span", role: "action", required: false },
+    { name: "aiset-tree-pending", element: "div", role: "structure", required: true },
+    { name: "aiset-tree-staged", element: "ul", role: "structure", required: false },
+    { name: "aiset-tree-staged-row", element: "li", role: "structure", required: false },
+    { name: "aiset-tree-staged-op", element: "span", role: "text", required: false },
+    { name: "aiset-tree-staged-path", element: "span", role: "text", required: false },
+    { name: "aiset-tree-staged-source", element: "span", role: "text", required: false },
+    { name: "aiset-tree-status", element: "div", role: "status", required: true },
+    { name: "aiset-tree-issues", element: "ul", role: "status", required: true },
+    { name: "aiset-tree-view", element: "button", role: "action", required: false },
+    { name: "aiset-tree-lifecycle", element: "button", role: "action", required: false },
+    { name: "aiset-tree-button", element: "button", role: "action", required: false },
+    { name: "aiset-tree-apply", element: "button", role: "action", required: false },
+    { name: "aiset-tree-reload", element: "button", role: "action", required: false },
+    { name: "aiset-tree-revert", element: "button", role: "action", required: false },
+    { name: "aiset-tree-icon", element: "svg", role: "icon", required: false },
+    { name: "aiset-tree-icon-text", element: "span", role: "icon", required: false },
+    { name: "aiset-form", element: "div", role: "form", required: false },
+    { name: "aiset-form-title", element: "div", role: "form", required: false },
+    { name: "aiset-form-row", element: "div", role: "form", required: false },
+    { name: "aiset-form-label", element: "label", role: "form", required: false },
+    { name: "aiset-form-field", element: "span", role: "form", required: false },
+    { name: "aiset-form-control", element: "input", role: "form", required: false },
+    { name: "aiset-form-actions", element: "div", role: "form", required: false },
+  ];
+
   function request(base, method, path, body) {
     var options = { method: method, headers: { Accept: "application/json" } };
     if (body !== undefined) {
@@ -138,9 +200,9 @@
   TreeEditor.prototype._renderToolbar = function () {
     var self = this;
     this.toolbar.innerHTML = "";
-    this.applyButton = element("button", { type: "button", text: "Apply", onclick: function () { self.applyPending(); } });
-    this.reloadButton = element("button", { type: "button", text: "Reload", onclick: function () { self.reload(true); } });
-    this.revertButton = element("button", { type: "button", text: "Revert all", onclick: function () { self.stageOperations([], "user"); } });
+    this.applyButton = element("button", { type: "button", class: "aiset-tree-button aiset-tree-apply", text: "Apply", onclick: function () { self.applyPending(); } });
+    this.reloadButton = element("button", { type: "button", class: "aiset-tree-button aiset-tree-reload", text: "Reload", onclick: function () { self.reload(true); } });
+    this.revertButton = element("button", { type: "button", class: "aiset-tree-button aiset-tree-revert", text: "Revert all", onclick: function () { self.stageOperations([], "user"); } });
     this.toolbar.appendChild(this.applyButton);
     this.toolbar.appendChild(this.reloadButton);
     this.toolbar.appendChild(this.revertButton);
@@ -955,7 +1017,7 @@
     /* An object or array is edited through its children, or as raw source. */
     if (isComposite(node)) { return null; }
     if (!caps.edit) {
-      return element("span", { class: "aiset-tree-value readonly", text: this._valueText(node) });
+      return element("span", { class: "aiset-tree-value aiset-tree-value-readonly", text: this._valueText(node) });
     }
     /* Raw mode shows the stored fragment below the row instead. */
     if (this.rawMode[node.path]) { return null; }
@@ -1582,7 +1644,7 @@
     var chooser = element("span", { class: "aiset-tree-chooser" });
     chooser.appendChild(label(" new item: "));
     (node.field.children_options || []).forEach(function (option) {
-      var button = element("button", { type: "button", text: option.type });
+      var button = element("button", { type: "button", class: "aiset-tree-button", text: option.type });
       button.addEventListener("click", function () {
         self.stageOperations([{ op: "add", path: node.path + "/-", value_text: self._newEntryText(option, 0) }], "user");
         chooser.remove();
@@ -1892,7 +1954,24 @@
   function mountTree(target, options) {
     var host = typeof target === "string" ? document.querySelector(target) : target;
     if (!host) { throw new Error("aiset.mountTree: target not found"); }
-    return new TreeEditor(host, options || {});
+    var instance = new TreeEditor(host, options || {});
+    warnIfUnstyled(host);
+    return instance;
+  }
+
+  /* Development aid (proposal item 4): a page with no rule matching the editor
+   * root renders unstyled, and nothing else says so. A styled toolbar is
+   * `display: flex`; the browser default for a div is `block`, so a `block`
+   * result means neither the library stylesheet nor a host rule matched. */
+  function warnIfUnstyled(host) {
+    if (typeof global.getComputedStyle !== "function") { return; }
+    if (typeof console === "undefined" || typeof console.warn !== "function") { return; }
+    var toolbar = host.querySelector && host.querySelector(".aiset-tree-toolbar");
+    if (!toolbar) { return; }
+    var display = global.getComputedStyle(toolbar).display;
+    if (display && display !== "block") { return; }
+    console.warn("aiset: the tree editor mounted without styling - no rule matches " +
+      ".aiset-tree-toolbar. Load aiset.css (or a host theme) or the tree renders unstyled.");
   }
 
   /* -- helpers (SPEC.md 18.2) ----------------------------------------
@@ -1973,6 +2052,9 @@
     });
   });
 
+  api.classes = function () {
+    return CLASS_INVENTORY.map(function (entry) { return Object.assign({}, entry); });
+  };
   api.registerHelper = registerHelper;
   api.helpers = helpers;
   api.renderTreeEditor = renderTreeEditor;

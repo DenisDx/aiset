@@ -581,3 +581,36 @@ holds the reproductions and stays the record of what was asked for.
   `create_asgi_app`. Covered in `tests/test_http.py` and `tests/test_asgi.py`;
   docs updated in `SPEC_service.md` section 10 and `AGENT_INTEGRATION.md`
   section 6.
+
+- 2026-10-17. Implemented `proposal_improvement4.md` items 1-8 (the host-owned
+  design contract).
+  - P1: `aiset.classes()` returns the class inventory as data
+    (`{name, element, role, required}`, 54 classes); a library test parses
+    `aiset-tree.js` and fails on any drift, and another checks the table in
+    `SPEC_service.md` section 21.1 matches the export.
+  - P2: the Apply / Reload / Revert toolbar buttons now carry
+    `aiset-tree-button` plus `aiset-tree-apply` / `-reload` / `-revert`, and the
+    chooser buttons carry `aiset-tree-button`, so a host ranks Apply by class
+    instead of `:first-child`.
+  - P3: `aiset.css` routes every colour through `--aiset-*` custom properties
+    declared on `:root`; a test forbids a literal colour outside that block.
+  - P4: `mountTree` warns once via `console.warn` when `getComputedStyle` on the
+    toolbar reports the default `display: block` (no matching rule), and stays
+    silent when styled.
+  - P5: the structural rules (`.aiset-tree-row`, `.aiset-tree-children`,
+    `.aiset-tree-desc`) move into `aiset.css`, tunable through
+    `--aiset-indent` / `--aiset-guide` / `--aiset-row-gap` / `--aiset-row-pad`.
+  - P6: the demo theme is split out and ships as
+    `src/aiset/assets/aiset-host-theme.css` (`THEME_NAME`, deliberately not in
+    `ASSET_NAMES`, so `include_assets()` never loads it); `demo2` links it and
+    keeps only its own layout; a test asserts the theme covers every emitted
+    class.
+  - P7: `readonly` renamed to `aiset-tree-value-readonly`; a test enforces every
+    emitted class starts with `aiset-` (only the `unsupported` badge kind is
+    exempt).
+  - P8: `aiset.css` adds a `:focus-visible` ring and the theme sets
+    `color-scheme`.
+  - Docs updated: `SPEC_service.md` section 21.1, `AGENT_INTEGRATION.md`
+    sections 8 and 8a. Tests: `tests/test_ui_assets.py`,
+    `demo2/tests/test_page.py`, `demo2/tests/test_app.py`. `./test.sh`: 419
+    passed.

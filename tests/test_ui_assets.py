@@ -288,6 +288,37 @@ assert(has(aiset.renderTreeEditor("demo2"), "aiset-tree-toolbar"), "tree fragmen
 assert(has(aiset.renderFullEditor("demo2"), "aiset-tree-editor"), "render_full_editor must delegate to the tree editor");
 assert(has(aiset.renderNodeEditor("demo2", "/server"), "data-aiset-node"), "node editor fragment must keep its id");
 
+/* The exported class inventory must equal the classes the source emits, so the
+ * doc, the export and the source are three views of one list. */
+assert(typeof aiset.classes === "function", "aiset.classes must be exported");
+const treeSource = fs.readFileSync(process.argv[3], "utf8");
+const emitted = new Set();
+const literal = /"([^"\n]*)"/g;
+let classMatch;
+while ((classMatch = literal.exec(treeSource)) !== null) {
+  const before = treeSource.slice(Math.max(0, classMatch.index - 60), classMatch.index);
+  if (/class(?:Name)?\s*[:=]|classList\.|setAttribute\("class"/.test(before)) {
+    classMatch[1].split(/\s+/).forEach((token) => {
+      if (/^aiset-[A-Za-z0-9-]+$/.test(token)) { emitted.add(token); }
+    });
+  }
+}
+const exported = new Set(aiset.classes().map((entry) => entry.name));
+assert(emitted.size === exported.size && [...emitted].every((name) => exported.has(name)),
+       "aiset.classes() must equal the classes the tree source emits");
+assert([...exported].every((name) => name.indexOf("aiset-") === 0),
+       "every inventory class starts with aiset-");
+
+/* A mount with no matching rule warns once; a styled one stays quiet. */
+const warnings = [];
+global.console.warn = (message) => warnings.push(message);
+global.window.getComputedStyle = () => ({ display: "block" });
+aiset.mountTree(doc.createElement(), { document: "demo4" });
+global.window.getComputedStyle = () => ({ display: "flex" });
+aiset.mountTree(doc.createElement(), { document: "demo5" });
+assert(warnings.length === 1 && /styl/.test(warnings[0]),
+       "mountTree must warn once when no rule matches the editor root");
+
 const host = doc.createElement();
 const first = aiset.mountTree(host, { document: "demo2" });
 aiset.mountTree(doc.createElement(), { document: "demo3" });
@@ -983,13 +1014,72 @@ def test_tree_editor_public_api(node, tmp_path):
 
 
 def test_include_assets_lists_every_shipped_asset():
+    from aiset.assets import ASSET_NAMES, THEME_NAME
     from aiset.httpd import CONTENT_TYPES
 
     shipped = sorted(path.name for path in ASSETS.iterdir() if path.suffix in (".js", ".css"))
-    assert shipped == ["aiset-tree.js", "aiset.css", "aiset.js"]
+    assert shipped == sorted([*ASSET_NAMES, THEME_NAME])
+    assert THEME_NAME not in ASSET_NAMES, "the theme is optional and must not be auto-loaded"
     assert set(CONTENT_TYPES) >= {".js", ".css"}
     source = (ASSETS / "aiset.js").read_text(encoding="utf-8")
     assert "/assets/aiset.js" in source and "/assets/aiset.css" in source
+
+
+def test_include_assets_never_loads_the_theme():
+    from aiset.assets import THEME_NAME, include_assets
+
+    assert THEME_NAME not in include_assets()
+
+
+def test_host_theme_covers_every_emitted_class():
+    import re
+
+    source = (ASSETS / "aiset-tree.js").read_text(encoding="utf-8")
+    names = re.findall(r'\{ name: "(aiset-[A-Za-z0-9-]+)"', source)
+    assert names, "the class inventory must be readable from the source"
+    theme = (ASSETS / "aiset-host-theme.css").read_text(encoding="utf-8")
+    missing = [name for name in names if not re.search(r"\." + re.escape(name) + r"\b", theme)]
+    assert not missing, missing
+
+
+def test_emitted_classes_are_namespaced():
+    import re
+
+    source = (ASSETS / "aiset-tree.js").read_text(encoding="utf-8")
+    allowed = {"unsupported"}  # a badge kind, like the dynamic dirty/new/deleted
+    for match in re.finditer(r'class:\s*"([^"\n]*)"', source):
+        for token in match.group(1).split():
+            assert token.startswith("aiset-") or token in allowed, token
+
+
+def test_stylesheet_routes_colours_through_variables():
+    import re
+
+    css = (ASSETS / "aiset.css").read_text(encoding="utf-8")
+    root = re.search(r":root\s*\{([^}]*)\}", css)
+    assert root, "aiset.css must declare :root defaults"
+    rest = css[: root.start()] + css[root.end():]
+    literals = re.findall(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(", rest)
+    assert not literals, literals
+    used = set(re.findall(r"var\((--aiset-[A-Za-z0-9-]+)\)", css))
+    declared = set(re.findall(r"(--aiset-[A-Za-z0-9-]+)\s*:", root.group(1)))
+    assert used <= declared, used - declared
+    assert re.search(r"\.aiset-tree-row\s*\{", css), "structure rules belong to the library"
+    assert re.search(r"\.aiset-tree-children\s*\{", css), "structure rules belong to the library"
+    indent = re.search(r"--aiset-indent:\s*(\d+)px", root.group(1))
+    assert indent and int(indent.group(1)) > 0, "the nested indent must be positive"
+    assert re.search(r"padding-left:\s*var\(--aiset-indent\)", css), "children use the indent"
+    assert re.search(r":focus-visible", css), "focus ring belongs to the library"
+
+
+def test_spec_lists_every_emitted_class():
+    import re
+
+    source = (ASSETS / "aiset-tree.js").read_text(encoding="utf-8")
+    names = set(re.findall(r'\{ name: "(aiset-[A-Za-z0-9-]+)"', source))
+    spec = (ASSETS.parents[2] / "SPEC_service.md").read_text(encoding="utf-8")
+    listed = set(re.findall(r"^\| `(aiset-[A-Za-z0-9-]+)` \|", spec, re.M))
+    assert listed == names, (names - listed, listed - names)
 
 
 def test_python_side_exposes_the_same_names():
