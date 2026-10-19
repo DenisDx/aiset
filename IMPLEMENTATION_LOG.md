@@ -633,3 +633,24 @@ holds the reproductions and stays the record of what was asked for.
     op. Covered in `tests/test_ui_assets.py` and `tests/test_tree_and_operations.py`
     (Document, service, authorization). Docs: `SPEC_service.md` section 20,
     `AGENT_INTEGRATION.md` section 13. `./test.sh`: 425 passed.
+
+- 2026-10-18. Implemented `proposal_improvement5.md`, the three defects in the
+  host-stylesheet contract left by `proposal_improvement4.md`.
+  - Item 1: removed the stale duplicate declarations of `.aiset-tree-env-state`
+    (kept the pill block and its `::before`), `.aiset-tree-env-state.on` and
+    `.aiset-tree-badge.draft` from `aiset.css`, so each selector is declared
+    once; `font-style: italic` was folded into the surviving `.aiset-tree-env-state`
+    block to keep the rendering identical. New test
+    `test_stylesheet_declares_no_selector_twice` fails on a repeated selector.
+  - Item 2: the library now paints every class the inventory marks `required:
+    true`, plus the related `aiset-tree-badges` and `aiset-tree-staged-row`
+    wrappers: containers and shell only (display, gap, spacing, font size), no
+    colour. `test_every_required_class_carries_a_stylesheet_rule` enforces it,
+    `test_inventory_matches_the_classes_the_source_emits` fails when a source
+    class is missing from `CLASS_INVENTORY`.
+  - Item 3: `SPEC_service.md` section 21.1 states that a class name in the
+    inventory is a durable styling contract and that renaming one is an
+    interface change; `AGENT_INTEGRATION.md` section 14 lists the files that
+    must move together.
+  - Docs updated: `SPEC_service.md` 21.1, `AGENT_INTEGRATION.md` 8a.2, 8a.3,
+    8a.8 and section 14. `./test.sh`: 428 passed (was 425).

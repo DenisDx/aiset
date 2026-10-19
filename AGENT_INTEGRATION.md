@@ -394,14 +394,21 @@ it is **not** loaded by `include_assets()`, so adopt it by linking it yourself.
 
 ### 8a.2 The class inventory
 
-`aiset-tree.js` emits 54 classes. This table is the contract; `aiset.css` styles
-a fraction of them, the reference theme (8a.4) styles all of them, and
-`aiset.classes()` returns the same list as data (`{name, element, role,
-required}`) - a library test parses the source and fails if the two disagree, so
-a host can write its coverage check against `aiset.classes()` instead of a
-regular expression over the JavaScript (8a.7).
+`aiset-tree.js` emits 54 classes. This table is the contract; `aiset.classes()`
+returns the same list as data (`{name, element, role, required}`) - a library
+test parses the source and fails if the two disagree, so a host can write its
+coverage check against `aiset.classes()` instead of a regular expression over
+the JavaScript (8a.7).
 
-**Must be styled, or the editor is unusable:**
+Every class the inventory marks `required: true` carries a rule in `aiset.css`:
+the library paints the structure that makes a tree a tree (row layout, the
+nesting indent, the guide line, the toggle) **and** the containers and shell
+around it - the toolbar, the wrapper of a node's badges, the status and issues
+blocks, the staged list. `required` is therefore a guarantee the library keeps,
+not a request to the host: a host that writes no stylesheet still gets a
+readable tree. Everything else is design, and the host owns it.
+
+**The classes that carry the tree:**
 
 | Class | Element | Meaning |
 |---|---|---|
@@ -409,7 +416,7 @@ regular expression over the JavaScript (8a.7).
 | `aiset-tree-row` | div | One node line: toggle, name, badges, value, controls. |
 | `aiset-tree-children` | div | Nested group. **Indentation and guide line go here.** |
 | `aiset-tree-desc` | div | Descriptor description of the node above it. |
-| `aiset-tree-badges` | span | Wrapper around a node's badges. The library styles the badge, never this. |
+| `aiset-tree-badges` | span | Wrapper around a node's badges. The library paints the wrapper and the badge. |
 | `aiset-tree-badge <kind>` | span | `type`, `apply`, `origin`, `env`, `draft`, `absent`, `default`, `lock`, `unsupported`, `req`, `dirty`, `new`, `deleted` |
 | `aiset-tree-name` | span | Key label, or a `.aiset-tree-key` input for a self-named child. |
 | `aiset-tree-value` | span | Wrapper around the value control(s). |
@@ -445,7 +452,7 @@ buttons), `aiset-tree-raw`, `aiset-tree-raw-title`,
 
 | Trap | What happens | Do instead |
 |---|---|---|
-| `aiset-tree-badges` is unstyled | Badges run together as one run of text, because the library styles the badge and not its wrapper | Style the wrapper: `display: inline-flex; gap: 4px` |
+| `aiset-tree-badges` was unstyled | Badges ran together as one run of text, because the library styled the badge and not its wrapper. The library now paints the wrapper (`display: inline-flex; gap: 4px`); a host restyles it only to change the spacing | Leave it, or restyle the wrapper as a whole |
 | Apply / Reload / Revert are styled by position | Since item 2 they carry `aiset-tree-button` plus `aiset-tree-apply` / `-reload` / `-revert`, so rank Apply by class (`:first-child` breaks when a button is added before it) | `.aiset-tree-apply { … }`, never `:first-child` |
 | Unscoped element selectors | `input[type="number"]` rules silently strip the steppers from **every** number field on the host page | Scope every rule to `.aiset-tree-editor`, `.aiset-tree-value` or `.aiset-form` |
 | The host's own controls use `style="…"` | An inline declaration beats a stylesheet rule of equal specificity, so a theme can never reach them | No inline styles on host chrome; theme them from the sheet |
@@ -597,7 +604,7 @@ This split is now implemented (items 5 and 8); the table is the contract:
 
 | Property | Owner | Reason |
 |---|---|---|
-| Row layout, the indent of `.aiset-tree-children`, the guide line, the focus ring | **Library** | Without them the tree is *unreadable*, not merely ugly. A host that ships no design still gets a tree. |
+| Row layout, the indent of `.aiset-tree-children`, the guide line, the focus ring, the toolbar shell and the badge/value wrappers | **Library** | Without them the tree is *unreadable*, not merely ugly. A host that ships no design still gets a tree. Every `required` class in 8a.2 is painted here. |
 | The `--aiset-*` variable *defaults* (a neutral light palette) | **Library** | The library must work with no host sheet. |
 | The variable *values*, spacing, font, radius, every state treatment | **Host** | A generated interface cannot guess a palette. |
 | `color-scheme`, host chrome, proxy paths | **Host** | They are properties of the host page. |
@@ -712,6 +719,7 @@ means this node may be removed from its parent.
 | New operation | `jsonsrc.py` (source edit), `service.py` (authorize, validate), `SPEC_.md`, `tests/test_tree_and_operations.py` |
 | New snapshot field | `tree.py`, editor rendering, `SPEC_service.md` section 19 (snapshot) and 21 (editor), `tests/test_tree_and_operations.py` |
 | Editor behaviour | `src/aiset/assets/aiset-tree.js`, its styles, `tests/test_ui_assets.py` (node smoke with a DOM stub) |
+| Renamed or removed emitted class | `aiset-tree.js` `CLASS_INVENTORY`, `aiset.css`, `SPEC_service.md` section 21.1, `AGENT_INTEGRATION.md` section 8a.2, `aiset-host-theme.css`, host stylesheets |
 | New host route | `demo2/app.py`, `demo2/tests/test_app.py`, `commands.md` |
 
 Interface changes are documented in `SPEC_service.md` in the same change; new

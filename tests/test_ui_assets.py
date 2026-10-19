@@ -1078,6 +1078,53 @@ def test_stylesheet_routes_colours_through_variables():
     assert re.search(r":focus-visible", css), "focus ring belongs to the library"
 
 
+def test_stylesheet_declares_no_selector_twice():
+    """One declaration per selector. A late duplicate silently overrides an
+    earlier one, so a fix applied to the wrong block passes every test and
+    changes nothing on screen."""
+    import re
+    from collections import Counter
+
+    css = (ASSETS / "aiset.css").read_text(encoding="utf-8")
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    counts: Counter = Counter()
+    for block in re.finditer(r"([^{}]+)\{", css):
+        for selector in block.group(1).split(","):
+            selector = " ".join(selector.split())
+            if selector:
+                counts[selector] += 1
+    repeated = {selector: n for selector, n in counts.items() if n > 1}
+    assert not repeated, f"aiset.css declares these selectors more than once: {repeated}"
+
+
+def test_every_required_class_carries_a_stylesheet_rule():
+    """`required` must mean the library paints it, or the flag is a promise the
+    library does not keep and an undesigned host gets a broken editor."""
+    import re
+
+    source = (ASSETS / "aiset-tree.js").read_text(encoding="utf-8")
+    required = re.findall(r'\{ name: "(aiset-[A-Za-z0-9-]+)"[^}]*required: true', source)
+    assert len(required) >= 10, "the inventory declares too few required classes"
+    css = (ASSETS / "aiset.css").read_text(encoding="utf-8")
+    missing = [name for name in required if not re.search(r"\." + re.escape(name) + r"\b", css)]
+    assert not missing, f"required but unpainted by aiset.css: {missing}"
+
+
+def test_inventory_matches_the_classes_the_source_emits():
+    """A class added to the sources without a matching CLASS_INVENTORY entry
+    would be invisible to a host coverage check; fail instead of drifting."""
+    import re
+
+    source = (ASSETS / "aiset-tree.js").read_text(encoding="utf-8")
+    declared = set(re.findall(r'\{ name: "(aiset-[A-Za-z0-9-]+)"', source))
+    emitted: set = set()
+    for match in re.finditer(r'"([^"\n]*)"', source):
+        before = source[max(0, match.start() - 60):match.start()]
+        if re.search(r"class(?:Name)?\s*[:=]|classList\.|setAttribute\(\"class\"", before):
+            emitted.update(t for t in match.group(1).split() if re.match(r"^aiset-[A-Za-z0-9-]+$", t))
+    assert emitted <= declared, f"emitted but not in CLASS_INVENTORY: {sorted(emitted - declared)}"
+
+
 def test_spec_lists_every_emitted_class():
     import re
 

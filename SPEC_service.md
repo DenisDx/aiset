@@ -857,8 +857,17 @@ contract a host stylesheet targets, so they are listed here, exported as data by
 source by a library test: the specification, the export and the source are three
 views of one list.
 
-`Required: yes` marks the classes a host must style for the tree to be readable;
-the rest is optional polish (AGENT_INTEGRATION.md section 8a).
+A class name in this inventory is a styling contract, as durable as a snapshot
+field: a host writes CSS against it and asserts on it. Renaming or removing one
+is an interface change, handled like a snapshot field rather than as internal
+tidying: the old name goes through a deprecation, or is documented as breaking
+and the version moves (section 22, AGENT_INTEGRATION.md section 14).
+
+`Required: yes` marks the classes a host must style for the tree to be readable.
+The library keeps that promise itself: every required class carries a rule in
+`aiset.css` - the containers, the shell and the structural layout - so an
+undesigned host still gets a readable tree, and the flag is a guarantee rather
+than a request. The rest is optional polish (AGENT_INTEGRATION.md section 8a).
 
 | Class | Element | Role | Required |
 |---|---|---|---|

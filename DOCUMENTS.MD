@@ -19,6 +19,11 @@ every document and what it is responsible for, per the agent workflow in
 | [SPEC_.md](SPEC_.md) | Proposed corrections to the protected `SPEC.md`: structural operations, tree snapshots, generated editors, the phase 4 list, merge precedence, the `any` value type, and union resolution. |
 | [proposal_demo2.md](proposal_demo2.md) | Proposal that defines the `demo2` acceptance host and the reusable editor extensions it required. |
 | [proposal_improvement_aidir.md](proposal_improvement_aidir.md) | Changes the aidir host needs from the library, each with a reproduction; every item is implemented and recorded in `IMPLEMENTATION_LOG.md` phase K. |
+| [proposal_improvement2.md](proposal_improvement2.md) | Host-driven library changes: assets under the mount prefix, `validate-document`, union `matched_option`, unsupported-capability reporting. |
+| [proposal_improvement3.md](proposal_improvement3.md) | `GET {base}/documents` requires `settings_read_source` unless the host opts into a public list. |
+| [proposal_improvement4.md](proposal_improvement4.md) | The host-owned design contract: class inventory, `--aiset-*` variables, structural rules in the library, reference theme. |
+| [proposal_improvement5.md](proposal_improvement5.md) | Three defects in the `proposal_improvement4.md` implementation: duplicated CSS selectors, required classes the library did not paint, and no stated stability of the class inventory. |
+| [notes_aidir_integration1.md](notes_aidir_integration1.md) | Host-side follow-ups found while wiring aidir to `proposal_improvement5.md` (stale comments, a coverage test that cannot see an unpainted required class). |
 | [AGENTS.md](AGENTS.md) | Exact copy of the host agent workflow; read-only for agents. |
 | [memory/context.md](memory/context.md) | Working context between sessions: decisions, open questions, user preferences, notes. |
 | [memory/history.md](memory/history.md) | Chronological record of requests, operations and results. |
