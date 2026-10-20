@@ -163,6 +163,7 @@ previous read returned, or `None` to accept whatever is current.
 | `get(document_id, path, *, view="source", principal)` | `GetResult` | `settings_read_source` / `settings_read_effective` | `value_text` is the source fragment; `effective` the resolved value. |
 | `validate(document_id, path, value_text, *, expected_revision, expected_descriptor_revision, principal)` | `ValidateResult` | `settings_validate` | `valid`, `preservable`, `issues`; writes nothing. |
 | `validate_document(document_id, source, *, principal)` | `ValidateResult` | `settings_validate` | Validate a whole candidate document; writes nothing, no LKG. |
+| `doctor(document_id, *, principal, fix=False, expected_revision=None, expected_descriptor_revision=None)` | `DoctorReport` | `settings_read_effective` / `settings_write` | Report every issue with a fix class; `fix` repairs the named classes. Writes only when the result is fully valid. |
 | `set(document_id, path, value_text, *, expected_revision, expected_descriptor_revision, principal)` | `SetResult` | `settings_write` | One path; probes, hooks, callbacks, application. |
 | `tree(document_id, path="", *, view="source", principal)` | `dict` | same as `get` | Snapshot; see section 12. |
 | `apply_operations(document_id, operations, *, expected_revision, expected_descriptor_revision, principal, dry_run=False)` | `OperationsResult` | `settings_validate` / `settings_write` | Atomic batch; see section 13. |
@@ -200,6 +201,7 @@ public document list (a liveness probe) opts in with `public_documents=True`.
 | POST | `/validate` | `document`, `path`, `value_text`, revisions | `ValidateResult` |
 | POST | `/value` | same | `SetResult` |
 | POST | `/document/validate` | `document`, `source` | `ValidateResult` for a whole candidate |
+| POST | `/document/doctor` | `document`, `fix`, revisions | `DoctorReport` |
 | POST | `/operations` | `document`, `operations`, revisions | `OperationsResult` (writes) |
 | POST | `/operations/validate` | same | `OperationsResult` with `dry_run: true` |
 | POST | `/env` | `document`, `names` | `{"ok": true, "present": {...}}` |
@@ -703,10 +705,39 @@ means this node may be removed from its parent.
   one entry (never a `remove` plus an `add`). `to` is the new key, checked like
   an `add` key; the editor stages this when the user edits a key field.
 - `move` carries the item with its comments.
+- `drop` removes a key the descriptor does **not** declare. It exists for the
+  doctor: `remove` resolves the node first and answers `NOT_FOUND` for exactly
+  that case. `drop` refuses a declared path, a read-only parent and a secret
+  subtree without `settings_edit_secret`.
 - One batch, one revision, all-or-nothing: the first failure aborts everything
   and the file stays byte-for-byte unchanged.
 - Validate with `dry_run=True` (or `POST /operations/validate`) before applying.
 - `value_text` is JSON5 source text: strings carry their quotes.
+
+### 13.1 Repairing a drifted document: `doctor`
+
+`doctor` reports every issue with the one fix class that could handle it, and
+`fix` applies the named classes. `fix=True` means `clamp` only.
+
+| Class | Repair | Safe? |
+|---|---|---|
+| `clamp` | number to its declared `minimum`/`maximum` | yes |
+| `coerce` | `"8080"` to `8080` for an unambiguous literal | opt-in |
+| `drop_unknown` | remove a key the descriptor does not declare | lossy |
+
+Report-only: `const`, `enum`, `pattern`, lengths, unions, keys, `required`
+(there is no default for a required node in this grammar), `env_*`, secrets,
+read-only nodes and parse errors.
+
+- The file is written **only if the repairs make it fully valid**; a partial fix
+  of an invalid file is refused and explained in `skipped`.
+- A secret/read-only/`const` ancestor is never repaired and never appears in
+  `before`/`after`.
+- The file on disk is inspected, never the LKG fallback.
+- CLI: `aiset doctor --config F --descriptor D [--env F] [--fix] [--class C]...`;
+  exit `0` valid, `1` issues remain, `2` repairs applied but issues remain.
+- HTTP: `POST {base}/document/doctor`; `fix` is a boolean, a class name or a
+  list.
 
 ## 14. Extending the library
 

@@ -654,3 +654,24 @@ holds the reproductions and stays the record of what was asked for.
     must move together.
   - Docs updated: `SPEC_service.md` 21.1, `AGENT_INTEGRATION.md` 8a.2, 8a.3,
     8a.8 and section 14. `./test.sh`: 428 passed (was 425).
+
+- 2026-10-20. Implemented `proposal_doctor.md`: `Service.doctor`, the `drop`
+  operation, `POST {base}/document/doctor` and `aiset doctor`.
+  - `src/aiset/doctor.py`: reports every `ValueIssue` with one fix class
+    (`clamp`, `coerce`, `drop_unknown`) or `None`, and applies the requested
+    classes. `fix=True` means `clamp` only. A secret, read-only or `const`
+    ancestor is never repaired and its value never appears in `before`/`after`.
+  - The file is written only when the repairs make it fully valid; a partial fix
+    of an invalid file is returned in `skipped` with the reason. The report
+    inspects the file on disk, never the Last-Known-Good fallback.
+  - New `drop` operation in `service.py`: removes an undeclared key, refuses a
+    declared path, a read-only parent and a secret subtree.
+  - Fixed a parser defect found while testing: a truncated file raised
+    `IndexError` from `parse_value` instead of `ParseError`, so a parse problem
+    escaped every caller that reports issues.
+  - HTTP route `POST {base}/document/doctor`; CLI `aiset doctor` with `--fix`,
+    `--class`, `--env`, `--typedef`, `--format` and exit codes 0/1/2.
+  - Docs: `SPEC_service.md` section 20 (drop) and new 20a (doctor),
+    `SPEC_.md` correction 8, `AGENT_INTEGRATION.md` sections 5, 6, 13.1,
+    `commands.md`, `TEST.md`.
+  - `./test.sh`: 453 passed (was 428).

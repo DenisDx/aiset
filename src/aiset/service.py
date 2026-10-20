@@ -432,6 +432,32 @@ class Service:
         self._require(principal, "settings_read_effective")
         return self._load_state(document_id, force_lkg=False)
 
+    def doctor(
+        self,
+        document_id: str,
+        *,
+        principal: Principal,
+        fix: bool | Iterable[str] = False,
+        expected_revision: str | None = None,
+        expected_descriptor_revision: str | None = None,
+    ) -> Any:
+        """Diagnose one document and optionally repair the fixable part.
+
+        See `aiset/doctor.py`: the report lists every issue with the one fix
+        class that could handle it, and `fix` applies the requested classes.
+        The file is written only when the repairs make it fully valid.
+        """
+        from .doctor import doctor as _doctor
+
+        return _doctor(
+            self,
+            document_id,
+            principal=principal,
+            fix=fix,
+            expected_revision=expected_revision,
+            expected_descriptor_revision=expected_descriptor_revision,
+        )
+
     def load_lkg(self, document_id: str, *, principal: Principal) -> LoadResult:
         self._require(principal, "settings_load_lkg")
         result = self._load_state(document_id, force_lkg=True)
@@ -822,6 +848,12 @@ class Service:
                 elif op == "remove":
                     self._check_operation(state, text, target, "remove", None, principal)
                     text = Document(text, origin=registration.store.path.name).apply_remove(target)
+                elif op == "drop":
+                    # The doctor's operation: remove a key the descriptor does not
+                    # declare. `remove` cannot do this because it resolves the node
+                    # first and answers NotFound for exactly the keys we want gone.
+                    self._check_operation(state, text, target, "drop", None, principal)
+                    text = Document(text, origin=registration.store.path.name).apply_remove(target)
                 elif op == "move":
                     source = str(operation.get("from") or "")
                     self._check_operation(state, text, source, "move", None, principal)
@@ -918,6 +950,19 @@ class Service:
                     raise BadRequest(f"Key {new_key!r} is not in key_enum")
                 if parent_node.key_pattern and not re.match(parent_node.key_pattern, new_key):
                     raise BadRequest(f"Key {new_key!r} does not match key_pattern")
+            return
+        if op == "drop":
+            if parent_node.type != "object":
+                raise BadRequest(f"Cannot drop a key from {parent_node.type} at {pointer!r}")
+            if parent_node.read_only:
+                raise Forbidden(f"Path {parent_pointer!r} is read-only")
+            declared = self._node_for(state.registration, pointer, required=False)
+            if declared is not None:
+                raise BadRequest(
+                    f"Path {pointer!r} is declared; use remove, not drop"
+                )
+            if self._subtree_has_secret(parent_node) and not principal.has("settings_edit_secret"):
+                raise SecretAccessDenied(f"Path {parent_pointer!r} is a secret subtree")
             return
         node = self._node_for(state.registration, pointer, required=False)
         if node is None and parent_node.type == "array" and parent_node.option_nodes:

@@ -136,3 +136,7 @@ rm -f demo2/config.json5 demo2/.env
 No MCP transport, no lifecycle-hook execution, no helper micro-forms, no
 generated forms beyond the tree editor, no revision diff/approval, and no
 autonomous agent framework exist yet. The suite passing does not claim them.
+
+`tests/test_doctor.py` covers the doctor: the fix classes, the refusal to write a
+partially repaired file, secrets never appearing in the report, and the HTTP and
+CLI surfaces.

@@ -394,3 +394,81 @@ def test_demo_serves_the_real_ui_and_api(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+# -- doctor CLI ------------------------------------------------------------
+
+
+def _doctor_file(tmp_path: Path, replacements=None) -> Path:
+    text = DEMO_CONFIG
+    for old, new in (replacements or []):
+        text = text.replace(old, new)
+    target = tmp_path / "config.json5"
+    target.write_text(text, encoding="utf-8")
+    return target
+
+
+def test_cli_doctor_reports_and_exits_1(capsys, tmp_path):
+    target = _doctor_file(
+        tmp_path, [("http_port: ${AISET_DEMO_HTTP_PORT:-8383},", "http_port: 70000,")]
+    )
+    code = main([
+        "doctor", "--config", str(target),
+        "--descriptor", str(ROOT / "examples" / "descriptor.json5"),
+    ])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["valid"] is False
+    issue = next(item for item in payload["issues"] if item["path"] == "/http_port")
+    assert issue["fix"] == "clamp"
+
+
+def test_cli_doctor_fix_writes_and_exits_0(capsys, tmp_path):
+    target = _doctor_file(
+        tmp_path, [("http_port: ${AISET_DEMO_HTTP_PORT:-8383},", "http_port: 70000,")]
+    )
+    code = main([
+        "doctor", "--config", str(target),
+        "--descriptor", str(ROOT / "examples" / "descriptor.json5"),
+        "--fix",
+    ])
+    capsys.readouterr()
+    assert code == 0
+    assert "http_port: 65535" in target.read_text(encoding="utf-8")
+
+
+def test_cli_doctor_class_is_required_for_a_lossy_repair(capsys, tmp_path):
+    target = _doctor_file(
+        tmp_path, [('  version: "1.0",', '  version: "1.0",\n  stale_key: 1,')]
+    )
+    code = main([
+        "doctor", "--config", str(target),
+        "--descriptor", str(ROOT / "examples" / "descriptor.json5"),
+        "--fix",
+    ])
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1 and payload["applied"] is False
+    assert "stale_key" in target.read_text(encoding="utf-8")
+
+    code = main([
+        "doctor", "--config", str(target),
+        "--descriptor", str(ROOT / "examples" / "descriptor.json5"),
+        "--class", "drop_unknown",
+    ])
+    capsys.readouterr()
+    assert code == 0
+    assert "stale_key" not in target.read_text(encoding="utf-8")
+
+
+def test_cli_doctor_text_format(capsys, tmp_path):
+    target = _doctor_file(
+        tmp_path, [("http_port: ${AISET_DEMO_HTTP_PORT:-8383},", "http_port: 70000,")]
+    )
+    code = main([
+        "doctor", "--config", str(target),
+        "--descriptor", str(ROOT / "examples" / "descriptor.json5"),
+        "--format", "text",
+    ])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert out.startswith("valid: False")
+    assert "/http_port [maximum]" in out

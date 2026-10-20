@@ -66,6 +66,32 @@ def build_parser() -> argparse.ArgumentParser:
     document.add_argument(
         "--quiet", action="store_true", help="print nothing when the document is valid"
     )
+    doctor = sub.add_parser(
+        "doctor",
+        help="diagnose a configuration file and optionally repair the fixable part",
+    )
+    doctor.add_argument("--config", required=True, metavar="FILE", help="configuration file to diagnose")
+    doctor.add_argument("--descriptor", required=True, metavar="FILE", help="its descriptor")
+    doctor.add_argument(
+        "--typedef", action="append", default=[], metavar="FILE",
+        help="descriptor whose typedefs the configuration may use; repeatable",
+    )
+    doctor.add_argument(
+        "--env", metavar="FILE",
+        help="read placeholders from this file instead of the process environment",
+    )
+    doctor.add_argument("--strict", action="store_true", help="unknown descriptor properties become errors")
+    doctor.add_argument(
+        "--fix", action="store_true",
+        help="apply the safe repairs (clamp); the file is written only if it becomes valid",
+    )
+    doctor.add_argument(
+        "--class", dest="classes", action="append", default=[], metavar="CLASS",
+        help="repair class to apply: clamp, coerce, drop_unknown; repeatable",
+    )
+    doctor.add_argument(
+        "--format", choices=("json", "text"), default="json", help="output format (default json)"
+    )
     return parser
 
 
@@ -91,6 +117,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _validate_descriptor(args)
     if args.command == "validate-document":
         return _validate_document(args)
+    if args.command == "doctor":
+        return _doctor(args)
     parser.print_help()  # pragma: no cover - argparse guards this
     return 2
 
@@ -171,6 +199,79 @@ def _validate_document(args: argparse.Namespace) -> int:
         args,
     )
     return 0 if result.valid else 1
+
+
+def _doctor(args: argparse.Namespace) -> int:
+    """Run the doctor against a real file; `--fix` writes it only when it becomes valid."""
+    import json
+
+    from .resolver import Resolver
+    from .service import Principal, Service
+
+    try:
+        descriptor_source = _read_file(args.descriptor)
+        typedef_sources = [_read_file(path) for path in args.typedef]
+        env_mapping = _read_env(args.env) if args.env else {}
+    except OSError as exc:
+        print(f"aiset: cannot read {exc.filename}: {exc.strerror}", file=sys.stderr)
+        return 2
+
+    diagnostic = validate_descriptor(
+        descriptor_source,
+        mode="strict" if args.strict else "default",
+        known_templates=_typedefs(args.typedef),
+    )
+    errors = [issue for issue in diagnostic.issues if issue.severity == "error"]
+    if errors:
+        payload = {"ok": False, "valid": False,
+                   "issues": [issue.to_dict() for issue in errors]}
+        print(json.dumps(payload, ensure_ascii=False, indent=2) if args.format == "json"
+              else _doctor_text(payload))
+        return 1
+
+    resolver = Resolver(overrides={}, dotenv=env_mapping, environ={}) if args.env else Resolver()
+    fix: object = args.classes if args.classes else bool(args.fix)
+    service = Service()
+    try:
+        service.register(
+            "document", args.config, descriptor_source,
+            resolver=resolver, typedef_sources=typedef_sources,
+        )
+        report = service.doctor("document", principal=Principal.demo(), fix=fix)
+    except AisetError as exc:
+        print(f"aiset: {exc.message}", file=sys.stderr)
+        return 1
+
+    payload = report.to_dict()
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(_doctor_text(payload))
+    if payload["valid"]:
+        return 0
+    return 2 if payload["applied"] else 1
+
+
+def _doctor_text(payload: dict[str, Any]) -> str:
+    """One line per issue, path first, then the applied fixes."""
+    lines = [f"valid: {payload['valid']}"]
+    for issue in payload.get("issues", []):
+        location = issue.get("path") or "/"
+        line = f"  {location} [{issue.get('rule') or issue.get('code')}] {issue.get('message')}"
+        if issue.get("fix"):
+            line += f"  -> {issue['fix']}"
+            if issue.get("before") is not None or issue.get("after") is not None:
+                line += f" ({issue.get('before')} => {issue.get('after')})"
+        elif issue.get("suggestion"):
+            line += f"  ({issue['suggestion']})"
+        lines.append(line)
+    for fix in payload.get("fixes", []):
+        lines.append(f"  applied {fix['action']} {fix['path']}: {fix.get('before')} => {fix.get('after')}")
+    for item in payload.get("skipped", []):
+        lines.append(f"  skipped {item['path']}: {item['reason']}")
+    if payload.get("new_revision"):
+        lines.append(f"  revision: {payload['new_revision']}")
+    return "\n".join(lines)
 
 
 def _validate_descriptor(args: argparse.Namespace) -> int:

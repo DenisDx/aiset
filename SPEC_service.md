@@ -44,6 +44,8 @@ service.validate(document_id, path, value_text, *,
                  expected_revision, expected_descriptor_revision,
                  principal) -> ValidateResult
 service.validate_document(document_id, source, *, principal) -> ValidateResult
+service.doctor(document_id, *, principal, fix=False,
+               expected_revision=None, expected_descriptor_revision=None) -> DoctorReport
 service.set(document_id, path, value_text, *,
             expected_revision, expected_descriptor_revision,
             principal) -> SetResult
@@ -322,6 +324,7 @@ including `uncertain` for a result that needs a re-read.
 | POST | `{base}/validate` | `validate` |
 | POST | `{base}/value` | `set` |
 | POST | `{base}/document/validate` | `validate_document` (read-only candidate) |
+| POST | `{base}/document/doctor` | `doctor` (section 20a) |
 | POST | `{base}/operations/validate` | `apply_operations(dry_run=True)` (section 20) |
 | POST | `{base}/operations` | `apply_operations` (section 20) |
 | POST | `{base}/env` | `env_status` (presence only) |
@@ -714,6 +717,7 @@ Operation shapes:
 {"op": "remove", "path": "/fixtures/tags/1"}
 {"op": "move",   "from": "/fixtures/items/2", "path": "/fixtures/items/0"}
 {"op": "rename", "path": "/fixtures/dynamic/old_key", "to": "new_key"}
+{"op": "drop",   "path": "/fixtures/retired_key"}
 ```
 
 HTTP:
@@ -748,6 +752,11 @@ Rules:
   `key_pattern`); the old key is refused when it is required, `const`,
   `read_only` or a fixed declared child, and a new key that already exists is
   refused.
+- `drop` removes one key the descriptor does **not** declare. It exists for the
+  doctor, because `remove` resolves the node first and answers `NOT_FOUND` for
+  exactly that case. `drop` refuses a declared path (use `remove`), a read-only
+  parent, and a secret subtree without `settings_edit_secret`; it requires
+  `settings_write`.
 - Every affected path is authorized (secret and read-only descendants included)
   and validated before anything is written.
 - Operations are applied in order to one candidate document; the first failure
@@ -778,6 +787,62 @@ issue list and writes nothing; permission failures keep their own status
 (`FORBIDDEN`, `SECRET_ACCESS_DENIED`), and stale revisions return
 `REVISION_CONFLICT` as for single-value writes. Backup, audit, callback,
 application-state and subscription semantics are identical to `set`.
+
+## 20a. Document doctor
+
+One call that answers "what is wrong with this file, and what can be repaired
+mechanically". It is a report first; `fix` applies the requested repair classes.
+
+```python
+service.doctor(document_id, *, principal, fix=False,
+               expected_revision=None, expected_descriptor_revision=None) -> DoctorReport
+```
+
+- `fix=False` (default): read-only, the revision does not change.
+- `fix=True`: the safe class, `clamp`.
+- `fix=["clamp", "coerce", "drop_unknown"]`: named classes, in any combination.
+
+| Class | Repair | Why |
+|---|---|---|
+| `clamp` | move a number to `minimum` / `maximum` | a bound is a descriptor fact |
+| `coerce` | `"8080"` to `8080` for an unambiguous literal | opt-in: a quoted number can be deliberate |
+| `drop_unknown` | remove a key the descriptor does not declare | lossy: it can be a typo or a future field |
+
+Report-only rules: `const`, `enum`, `pattern`, `min_length`, `max_length`,
+`min_items`, `max_items`, `unique_items`, `key_pattern`, `key_enum`, `union`,
+`nullable`, `required` (a required node cannot carry a default, so no value can
+be invented), `env_*`, `read_only`, and every parse error.
+
+A secret, read-only or `const` ancestor is never repaired and its value is never
+reported in `before`/`after`.
+
+The file is written **only when the repairs make the document fully valid**. A
+partially repaired invalid file is never stored: that would break the guarantee
+that a stored document has been validated. Fixes that cannot complete the job are
+returned in `skipped` with the reason.
+
+Report:
+
+```json
+{
+  "ok": true, "document": "main", "revision": "sha256:...",
+  "descriptor_revision": "sha256:...", "valid": false,
+  "issues": [{"path": "/port", "rule": "maximum", "message": "...",
+              "severity": "error", "fix": "clamp", "before": 70000, "after": 65535}],
+  "fixes": [], "skipped": [], "applied": false, "new_revision": null
+}
+```
+
+Permissions: the report needs `settings_read_effective`; a repair needs
+`settings_write`. A principal without write permission gets the report with
+every planned fix in `skipped` (`forbidden`), not an exception.
+
+HTTP: `POST {base}/document/doctor` with `{"document", "fix", "expected_revision",
+"expected_descriptor_revision"}`; `fix` is a boolean, a class name or a list.
+The response is the report above, with status `200` for a valid or invalid
+document alike; request errors keep their usual envelopes.
+
+---
 
 ## 21. UI asset API for generated editors
 

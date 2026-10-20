@@ -231,6 +231,22 @@ def _handle_api(
         )
         return _json(start_response, 200, result.to_dict())
 
+    if method == "POST" and route == "/document/doctor":
+        payload = _body(request, service)
+        fix = payload.get("fix", False)
+        if isinstance(fix, list) and not all(isinstance(item, str) for item in fix):
+            raise BadRequest("'fix' list must contain class names only")
+        if not isinstance(fix, (bool, list, str)):
+            raise BadRequest("'fix' must be a boolean, a class name or a list of class names")
+        result = service.doctor(
+            _one(payload, "document"),
+            principal=principal,
+            fix=fix,
+            expected_revision=payload.get("expected_revision"),
+            expected_descriptor_revision=payload.get("expected_descriptor_revision"),
+        )
+        return _json(start_response, 200, result.to_dict())
+
     if method == "POST" and route == "/document/validate":
         payload = _body(request, service)
         source = payload.get("source")

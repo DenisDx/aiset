@@ -12,7 +12,7 @@ every document and what it is responsible for, per the agent workflow in
 | [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) | Task-oriented integration guide for agents: hard rules, Python/HTTP/editor contracts, descriptor grammar in one screen, operations, permissions, error table, extension and testing checklists. Optimized for model consumption; points to the normative documents instead of repeating them. |
 | [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) | Implementation plan and work log: phases, completion marks, decisions and deviations. |
 | [proposal_demo2.md](proposal_demo2.md) | Proposed full demo2 host: reusable configuration tree, structural edits, AI chat, lifecycle actions, launcher, and acceptance contract. |
-| [_AGENT_NOTES.md](_AGENT_NOTES.md) | Implementation guidance: working preferences, decisions with rationale, hard constraints, pitfalls, resolved white spots, do-not list. |
+| [proposal_doctor.md](proposal_doctor.md) | Proposal for a `doctor` API: validate a document, report every issue with a fix class, and optionally repair the mechanically fixable part; includes the host command contract. |
 | [TEST.md](TEST.md) | Test protocol: automated suite coverage, manual browser and demo protocol, acceptance matrix mapping. |
 | [commands.md](commands.md) | Real commands: local environment setup, demo start, tests, descriptor CLI. |
 | [DOCUMENTS.MD](DOCUMENTS.MD) | This document map. |
@@ -52,4 +52,5 @@ every document and what it is responsible for, per the agent workflow in
 - An interface change updates `SPEC_service.md` and the implementation in the
   same change (SPEC_service.md section 22).
 - New behaviour is recorded in `IMPLEMENTATION_LOG.md`; decisions with
-  rationale go into `_AGENT_NOTES.md`.
+  rationale goes into `AGENT_INTEGRATION.md` section 19.3, next to the rules it
+explains.

@@ -297,6 +297,11 @@ class _Parser:
 
     def parse_value(self) -> Node:
         char = self.peek()
+        if char == "":
+            # A truncated file used to reach parse_literal and raise IndexError,
+            # which is not an AisetError and escaped every caller that reports
+            # parse problems as issues.
+            raise self.fail("Unexpected end of input")
         if char == "{":
             return self.parse_object()
         if char == "[":

@@ -421,3 +421,43 @@ Validation remains authoritative in both positions: the value is checked against
 every alternative and a single issue is reported when none fits. A resolution
 choice can therefore never make an invalid value valid.
 ```
+
+---
+
+## Correction 8: the operation list gains `rename` and `drop`
+
+### Old text
+
+`SPEC_.md` section 5.3.7:
+
+```text
+A structural operation is one of `set`, `add`, `remove`, or `move`, addressed by
+JSON Pointer.
+```
+
+### Why
+
+`rename` shipped with the tree editor and never updated this sentence: one key is
+renamed in place, keeping its value and comments, rather than being removed and
+added again.
+
+`drop` is new and belongs to the doctor. It removes one key the descriptor does
+**not** declare, which `remove` cannot do: `remove` resolves the node first and
+answers `NOT_FOUND` for exactly the keys a drifted file carries. `drop` refuses a
+declared path, a read-only parent and a secret subtree without
+`settings_edit_secret`, and it requires `settings_write`.
+
+### Recommended new text
+
+```text
+A structural operation is one of `set`, `add`, `remove`, `move`, `rename` or
+`drop`, addressed by JSON Pointer. `add` uses the `-` token to append an array
+item, or names a new key of an object that permits one; `move` takes one array
+item to another index; `rename` changes one object key in place, keeping its
+value and comments; `drop` removes one key the descriptor does not declare and is
+used by the doctor to clean a drifted file.
+
+An operation authorizes and validates every affected path, preserves the source
+bytes and owned comments of everything it does not touch, and rejects unsafe
+comment ownership with `COMMENT_PRESERVATION_CONFLICT`.
+```

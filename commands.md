@@ -79,6 +79,30 @@ backend; this is the CI gate for "does my shipped file still load".
   --descriptor examples/descriptor.json5 --format text
 ```
 
+## Doctor: report and repair a drifted file
+
+The report lists every issue with the one fix class that could handle it. `--fix`
+means the safe class (`clamp`) and is written only if the file becomes fully
+valid; a lossy class is named explicitly. Exit status `0` valid, `1` issues
+remain, `2` repairs applied but issues remain.
+
+```sh
+# report only; writes nothing
+.venv/bin/aiset doctor --config demo2/config.json5 \
+  --descriptor demo2/descriptor.json5 \
+  --typedef demo2/conf2/descriptor.json5 --env demo2/.env --format text
+
+# safe repair: clamp an out-of-range number
+.venv/bin/aiset doctor --config demo2/config.json5 \
+  --descriptor demo2/descriptor.json5 --fix
+
+# remove keys the descriptor does not declare (lossy, shown in the report)
+.venv/bin/aiset doctor --config demo2/config.json5 \
+  --descriptor demo2/descriptor.json5 --class drop_unknown
+```
+
+Fix classes: `clamp`, `coerce`, `drop_unknown`. Everything else is report-only.
+
 `--env` supplies resolution inputs explicitly instead of reading the process
 environment. Exit status is `0` clean, `1` invalid, `2` on usage or I/O error.
 

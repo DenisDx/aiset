@@ -336,3 +336,40 @@ def test_static_assets_are_never_served_stale(service):
     assert captured["headers"]["cache-control"] == "no-cache, must-revalidate"
     assert captured["headers"]["last-modified"], "the asset must carry a validator"
     assert b"expandAll" in body
+
+
+def test_document_doctor_reports_fixable_issues(client, demo_dir):
+    """The route returns the same report the service builds, with fix classes."""
+    target = demo_dir / "config.json5"
+    target.write_text(
+        DEMO_CONFIG.replace("http_port: ${AISET_DEMO_HTTP_PORT:-8383},", "http_port: 70000,"),
+        encoding="utf-8",
+    )
+    status, payload = client.post("/api/settings/document/doctor", {"document": "demo"})
+    assert status == 200
+    assert payload["valid"] is False
+    issue = next(item for item in payload["issues"] if item["path"] == "/http_port")
+    assert issue["rule"] == "maximum"
+    assert issue["fix"] == "clamp"
+    assert payload["applied"] is False
+
+
+def test_document_doctor_repairs_when_asked(client, demo_dir):
+    target = demo_dir / "config.json5"
+    target.write_text(
+        DEMO_CONFIG.replace("http_port: ${AISET_DEMO_HTTP_PORT:-8383},", "http_port: 70000,"),
+        encoding="utf-8",
+    )
+    status, payload = client.post(
+        "/api/settings/document/doctor", {"document": "demo", "fix": ["clamp"]}
+    )
+    assert status == 200
+    assert payload["applied"] is True and payload["valid"] is True
+    assert "http_port: 65535" in target.read_text(encoding="utf-8")
+
+
+def test_document_doctor_rejects_a_bad_fix_argument(client):
+    status, payload = client.post(
+        "/api/settings/document/doctor", {"document": "demo", "fix": 5}
+    )
+    assert status == 400 and payload["error"]["code"] == "BAD_REQUEST"
