@@ -254,7 +254,7 @@ precedence profile exists in the library.
 | [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) | Implementation plan and work log. |
 | [proposal_demo2.md](proposal_demo2.md) | Proposal for the `demo2` acceptance host and the reusable editor extensions it required. |
 | [SPEC_.md](SPEC_.md) | Proposed corrections to the protected `SPEC.md` (structural operations, tree snapshots, generated editors). |
-| [_AGENT_NOTES.md](_AGENT_NOTES.md) | Implementation guidance and pitfalls. |
+| [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) | Integration guide for agents: steps, invariants, design rationale and pitfalls. |
 | [TEST.md](TEST.md) | Test protocol and acceptance mapping. |
 | [commands.md](commands.md) | Setup, run, and test commands. |
 | [AGENTS.md](AGENTS.md) | Agent workflow (read-only for agents). |

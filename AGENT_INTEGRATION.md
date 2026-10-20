@@ -19,7 +19,7 @@ repository.
 | Know what is forbidden | Section 1, Section 18 |
 | Normative interface detail | [SPEC_service.md](SPEC_service.md) |
 | Full design and semantics | [SPEC.md](SPEC.md) (read-only) |
-| Implementation reasoning, pitfalls, user preferences | [_AGENT_NOTES.md](_AGENT_NOTES.md) |
+| Design rationale, invariants, pitfalls, user preferences | Section 19 |
 | Commands to run | [commands.md](commands.md), [TEST.md](TEST.md) |
 | Working rules of this repository | [AGENTS.md](AGENTS.md) (read-only) |
 
@@ -723,8 +723,8 @@ means this node may be removed from its parent.
 | New host route | `demo2/app.py`, `demo2/tests/test_app.py`, `commands.md` |
 
 Interface changes are documented in `SPEC_service.md` in the same change; new
-behaviour goes to `IMPLEMENTATION_LOG.md`, decisions with rationale to
-`_AGENT_NOTES.md`.
+behaviour goes to `IMPLEMENTATION_LOG.md`, and the standing rationale for a
+decision belongs in section 19.3 of this file so it stays next to the rules.
 
 ## 15. Testing an integration
 
@@ -787,3 +787,116 @@ with the shell that started it, which leaves a silently dead port.
   between sessions and must stay under 20000 characters.
 - Do not reformat `examples/`, do not use the system Python, and do not commit
   without being asked.
+---
+
+## 19. Rationale, invariants and pitfalls
+
+The working notes that used to sit in a separate file are folded in here. They
+are normative for an integrator, not history.
+
+### 19.1 How the work is judged
+
+| Preference | Consequence |
+|---|---|
+| The simplest solution that satisfies the requirement | No speculative abstraction, no "future-proofing" that adds concepts |
+| The public interface stays small | Fewer concepts beats more capability; the tree editor API is the ceiling |
+| No transactions, locks or atomicity across a batch | v1 has independent sequential operations; recovery is the Last Known Good file, not a rollback protocol |
+| Fail fast on a schema error | A descriptor conflict is a development bug: stop with a clear error, never resolve it silently |
+| Encapsulation | Everything about a component lives in that component's folder, descriptor templates included |
+| Callbacks receive the whole configuration | The callback decides what matters; do not hand it a branch |
+| English in documents, chat in the language of the request | |
+| Short, meaningful comments; concise answers | Do not explain the obvious |
+
+### 19.2 Invariants
+
+- **Source preservation is non-negotiable.** Never serialise the effective
+  dictionary and rebuild the file. A read with no edit leaves the bytes
+  identical, and there is no parse-and-dump fallback.
+- **The core imports nothing host-shaped.** No host modules, FastAPI, MCP SDK,
+  Redis or UI framework inside `src/aiset/`; those are optional extras.
+  Importing the library reads no configuration, mutates no environment and
+  starts nothing.
+- **Secrets never leave the server.** Environment diagnostics expose variable
+  names only, never values.
+- **Pin, never follow.** An install uses a pinned revision; an incompatible
+  version fails with a clear compatibility error instead of changing behaviour
+  silently.
+- **`bool` is not `int`.** Integer input stays within
+  `[-9007199254740991, 9007199254740991]`; `NaN` and `Infinity` are rejected.
+- **Optional integrations are separate dependencies.** A conflict with a host
+  dependency is reported, not resolved by picking one.
+
+### 19.3 Why the design is what it is
+
+The rules are in `SPEC.md`; this is the reasoning behind the ones hosts question
+most often.
+
+| Decision | Reason |
+|---|---|
+| One resolver policy for every host (SPEC 6) | Host overrides -> environment -> `.env` -> inline default -> config default, with POSIX `:-` semantics and a single pass. A per-host policy would make the same file behave differently in two hosts. |
+| `set` replaces, never merges (SPEC 5.3) | A silently deep-merged `set` makes an edit's effect impossible to predict from the request. Merging exists separately, for layers. |
+| Merge is pure; an update cannot delete a base field (SPEC 10.1) | Removing a base field is a decision the host should make explicitly; chaining is its job. |
+| Application state derives from `apply`, not from a callback (SPEC 8.2) | The descriptor knows what a change requires; the presence of a callback is not a policy. |
+| An invalid external edit is preserved before restore (SPEC 10.4) | The operator's bytes are evidence. They go to `<file>.conflicted.<UTC-ISO>.back`, and the restore is refused if that copy cannot be written. |
+| Revisions include every byte (SPEC 7.3) | Two files that differ only in whitespace are different files; a revision that ignored that would lose an edit. |
+
+### 19.4 Pitfalls
+
+- **Any byte changes the revision**, whitespace included. Never normalise line
+  endings or a trailing newline.
+- **A valid external edit is adopted; an invalid one is restored.** Do not
+  clobber either with a stale in-memory copy, and never serve stale data.
+- **Two different things are called "mount".** A descriptor fragment mounts at a
+  subtree (SPEC 4.3); a Config targets a data location (SPEC 10.2). Name them so
+  the difference is visible.
+- **Two path syntaxes.** JSON Pointer for edits (SPEC 5.3); `[id=value]` for
+  Config mount addressing (SPEC 10.2).
+- **The application callback is not `after_save`.** The first applies to the
+  runtime, the second is a notification; the order is fixed in SPEC 10.3.
+- **Active revision is not stored revision.** The host owns application, the
+  library owns storage.
+- **`min_length` / `max_length` count Unicode code points.** Pick one unit and
+  stay with it.
+- **`SPEC.md` and `SPEC_service.md` overlap on purpose.** `SPEC_service.md` is
+  authoritative for the interface; when one changes, change the other in the same
+  commit.
+- **`Service.register` is lenient, the CLI is not.** Unknown properties are
+  warnings at runtime so host metadata is accepted; `validate-descriptor
+  --strict` turns them into errors. That split is deliberate: the runtime must
+  not reject a host's own annotations, and the CLI is the typo gate.
+
+### 19.5 What the implementation actually is
+
+- **Zero runtime dependencies.** The JSON5 template engine (`jsonsrc.py`), the
+  WSGI adapter (`httpd.py`) and the console script (`cli.py`) ship with the
+  package.
+- **Hooks compile but do not execute.** A write touching a hook-bound node is
+  refused with `UNSUPPORTED_CAPABILITY`, and the snapshot reports
+  `capabilities.unsupported = "hooks"` with every action false.
+- **No MCP transport and no helper execution in this revision.** The Python and
+  HTTP surfaces are complete; do not plan around an MCP endpoint that does not
+  exist yet.
+- **`PARSE_ERROR` (400) and `INVALID_DESCRIPTOR` (422)** are additive codes on
+  top of the error table in section 6.
+
+### 19.6 What a host test suite should cover
+
+Exact source preservation comes first, because it is the highest-risk area:
+compare bytes, not parsed values. Then descriptor composition conflicts, dynamic
+keys, unions, absent versus null versus default, the resolver policy, comment
+ownership and conflict rejection, stale revisions, lock timeout, atomic-write
+fault injection, valid and invalid external edits, merge rules, callbacks and
+rollback, transport parity (Python, HTTP, ASGI), secret handling and the limits.
+
+Run the same library revision against more than one host adapter without changing
+it. That is the point of a library.
+
+### 19.7 Where each rule lives
+
+| Question | Document |
+|---|---|
+| Goal, grammar, storage, security, phases, hooks | `SPEC.md` |
+| Python and HTTP signatures, envelopes, revisions, CLI | `SPEC_service.md`, authoritative for the interface |
+| Task-shaped integration steps, design rationale, pitfalls | This file |
+| What changed, and when | `IMPLEMENTATION_LOG.md` |
+| Runnable commands | `TEST.md`, `commands.md` |
