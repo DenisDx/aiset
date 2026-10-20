@@ -274,3 +274,71 @@ def test_a_file_that_does_not_parse_reports_and_applies_nothing(tmp_path):
 
 def test_the_safe_classes_are_exactly_the_clamp():
     assert SAFE_CLASSES == (FIX_CLAMP,)
+
+
+# -- a drifted key inside a union ------------------------------------------
+
+UNION_DESCRIPTOR = """
+{
+  descriptor_version: "1.0",
+  root: { type: "object", children: {
+    item: {
+      type: "union",
+      description: "One of two shapes",
+      children_options: [
+        { type: "object", description: "A", children: { a: { type: "int" } } },
+        { type: "object", description: "B", children: { b: { type: "string" } } },
+      ],
+    },
+  } },
+}
+"""
+
+
+def test_a_drifted_key_inside_a_union_is_reported_at_the_key(tmp_path):
+    """The validator reports the union path; the repair belongs to the key.
+
+    040 carried `apiKey` at the worker level, where it is not declared, while
+    the union message named it only inside the union path.
+    """
+    service = _service(tmp_path, "{\n  item: { a: 1, stray: 2 },\n}\n",
+                       descriptor=UNION_DESCRIPTOR)
+
+    report = service.doctor("doc", principal=Principal.demo())
+
+    issue = next(item for item in report.issues if item.rule == "union")
+    assert issue.fix == FIX_DROP_UNKNOWN
+    assert issue.fix_path == "/item/stray"
+
+
+def test_a_drifted_key_inside_a_union_is_dropped_and_the_document_becomes_valid(tmp_path):
+    service = _service(tmp_path, "{\n  item: { a: 1, stray: 2 },\n}\n",
+                       descriptor=UNION_DESCRIPTOR)
+
+    report = service.doctor("doc", principal=Principal.demo(), fix=[FIX_DROP_UNKNOWN])
+
+    assert report.applied is True and report.valid is True
+    written = (tmp_path / "config.json5").read_text(encoding="utf-8")
+    assert "stray" not in written
+    issue = next(item for item in report.issues if item.rule == "union")
+    assert issue.resolved is True
+
+
+def test_drop_refuses_a_key_that_an_alternative_declares(tmp_path):
+    """`drop` must not become a way to remove a declared value."""
+    from aiset.errors import AisetError
+
+    service = _service(tmp_path, "{\n  item: { a: 1, stray: 2 },\n}\n",
+                       descriptor=UNION_DESCRIPTOR)
+    revision = service.load("doc", principal=Principal.demo()).revision
+
+    # A batch with one refused operation is reported as a validation failure;
+    # the important part is that the declared key is not removed.
+    with pytest.raises(AisetError):
+        service.apply_operations(
+            "doc", [{"op": "drop", "path": "/item/a"}],
+            expected_revision=revision,
+            expected_descriptor_revision=service.documents["doc"].descriptor.revision,
+            principal=Principal.demo(),
+        )
+    assert "item: { a: 1, stray: 2 }" in (tmp_path / "config.json5").read_text()

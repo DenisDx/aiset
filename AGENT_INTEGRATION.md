@@ -729,6 +729,8 @@ Report-only: `const`, `enum`, `pattern`, lengths, unions, keys, `required`
 (there is no default for a required node in this grammar), `env_*`, secrets,
 read-only nodes and parse errors.
 
+- A `union` issue that names an `undeclared_field` is repaired by dropping that
+  key under the union path, but only when no alternative declares it.
 - The file is written **only if the repairs make it fully valid**; a partial fix
   of an invalid file is refused and explained in `skipped`.
 - A secret/read-only/`const` ancestor is never repaired and never appears in

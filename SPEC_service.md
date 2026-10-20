@@ -756,7 +756,9 @@ Rules:
   doctor, because `remove` resolves the node first and answers `NOT_FOUND` for
   exactly that case. `drop` refuses a declared path (use `remove`), a read-only
   parent, and a secret subtree without `settings_edit_secret`; it requires
-  `settings_write`.
+  `settings_write`. A **union** parent is allowed when no alternative declares
+  the key: the key is stray in every shape, so removing it cannot make the value
+  match an alternative worse.
 - Every affected path is authorized (secret and read-only descendants included)
   and validated before anything is written.
 - Operations are applied in order to one candidate document; the first failure
@@ -807,6 +809,11 @@ service.doctor(document_id, *, principal, fix=False,
 | `clamp` | move a number to `minimum` / `maximum` | a bound is a descriptor fact |
 | `coerce` | `"8080"` to `8080` for an unambiguous literal | opt-in: a quoted number can be deliberate |
 | `drop_unknown` | remove a key the descriptor does not declare | lossy: it can be a typo or a future field |
+
+A `union` issue whose message names an `undeclared_field` is handled by the same
+class: the validator reports it at the union path, but the repair targets the key
+under that path, provided no alternative declares it. Without this, one stray key
+inside a union keeps the document invalid and blocks every other repair.
 
 Report-only rules: `const`, `enum`, `pattern`, `min_length`, `max_length`,
 `min_items`, `max_items`, `unique_items`, `key_pattern`, `key_enum`, `union`,

@@ -675,3 +675,17 @@ holds the reproductions and stays the record of what was asked for.
     `SPEC_.md` correction 8, `AGENT_INTEGRATION.md` sections 5, 6, 13.1,
     `commands.md`, `TEST.md`.
   - `./test.sh`: 453 passed (was 428).
+
+- 2026-10-21. Doctor: a stray key inside a `union` member is now repaired.
+  - The validator reports "value matches none of the N alternatives
+    (undeclared_field: Field X ...)" at the union path, so the doctor classified
+    it as report-only; one such key kept the document invalid and blocked every
+    other repair (the 040 incident: `apiKey` at the worker level).
+  - `drop` now accepts a union parent when no alternative declares the key; a
+    declared key is still refused. The doctor plans the drop at the child path
+    and marks the issue `resolved` after the write.
+  - The doctor suppresses the write path's duplicate `invalid_document` log line
+    while it is repairing, and `SettingsRuntime.build(refresh=False)` lets the
+    host inspect documents without the startup error.
+  - `tests/test_doctor.py`: 21 passed (union report, repair, declared-key refusal).
+

@@ -20,6 +20,7 @@ asking "what is wrong with this file" must be told about the file.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
@@ -57,9 +58,11 @@ class DoctorIssue:
     line: int | None = None
     column: int | None = None
     fix: str | None = None
+    fix_path: str | None = None
     suggestion: str | None = None
     before: Any = None
     after: Any = None
+    resolved: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -75,9 +78,13 @@ class DoctorIssue:
             out["column"] = self.column
         if self.suggestion:
             out["suggestion"] = self.suggestion
+        if self.fix_path and self.fix_path != self.path:
+            out["fix_path"] = self.fix_path
         if self.fix:
             out["before"] = self.before
             out["after"] = self.after
+        if self.resolved:
+            out["resolved"] = True
         return out
 
 
@@ -236,13 +243,24 @@ def doctor(
             return report
 
     try:
-        result = service.apply_operations(
-            document_id,
-            operations,
-            expected_revision=revision,
-            expected_descriptor_revision=registration.descriptor.revision,
-            principal=principal,
-        )
+        # The write path loads the current state first, which logs the invalid
+        # document. The doctor is about to report and repair exactly that, so the
+        # duplicate log line would only confuse the operator.
+        import logging
+
+        logger = logging.getLogger("aiset")
+        previous_level = logger.level
+        logger.setLevel(logging.CRITICAL)
+        try:
+            result = service.apply_operations(
+                document_id,
+                operations,
+                expected_revision=revision,
+                expected_descriptor_revision=registration.descriptor.revision,
+                principal=principal,
+            )
+        finally:
+            logger.setLevel(previous_level)
     except ValidationError as exc:
         report.skipped.extend(DoctorSkipped(item.path, exc.message) for item in requested)
         return report
@@ -254,6 +272,11 @@ def doctor(
     report.applied = result.stored
     report.valid = result.stored
     report.new_revision = result.revision if result.stored else None
+    if result.stored:
+        repaired = {operation["path"] for operation in operations}
+        for issue in report.issues:
+            if (issue.fix_path or issue.path) in repaired:
+                issue.resolved = True
     return report
 
 
@@ -339,6 +362,18 @@ def _classify(
         issue.after = converted
         return
 
+    if issue.rule == "union":
+        # A value that matches no alternative usually differs from the closest
+        # one by a single undeclared key. The validator reports that at the union
+        # path, but the repair belongs to the key itself.
+        key = _union_undeclared_key(issue.message)
+        if key and node is not None and node.type == "union" and not _union_blocked(node):
+            child = (issue.path + "/" + key) if issue.path else "/" + key
+            if service._node_for(registration, child, required=False) is None:
+                issue.fix = FIX_DROP_UNKNOWN
+                issue.fix_path = child
+        return
+
     if issue.rule == "undeclared_field":
         issue.fix = FIX_DROP_UNKNOWN
         token = issue.path.rsplit("/", 1)[-1]
@@ -378,9 +413,10 @@ def _plans(
                            "value_text": json.dumps(issue.after, ensure_ascii=False)},
             ))
         elif issue.fix == FIX_DROP_UNKNOWN:
+            target = issue.fix_path or issue.path
             plans.append(DoctorFix(
-                path=issue.path, action="drop", rule=issue.rule, fix_class=issue.fix,
-                operation={"op": "drop", "path": issue.path},
+                path=target, action="drop", rule=issue.rule, fix_class=issue.fix,
+                operation={"op": "drop", "path": target},
             ))
     return plans
 
@@ -501,6 +537,27 @@ def _coerce(document: Document, path: str, node: Any, value: Any) -> Any:
         if text == "false":
             return False
     return None
+
+
+def _union_undeclared_key(message: str) -> str | None:
+    """The key named by a union diagnostic, or None.
+
+    The validator formats the closest alternative's first issues into the union
+    message; only `undeclared_field` is safe to act on here.
+    """
+    match = re.search(r"undeclared_field: Field '([^']+)' is not declared", message)
+    return match.group(1) if match else None
+
+
+def _union_blocked(node: Any) -> bool:
+    """Whether every repair below a union is forbidden by a read-only shape.
+
+    A secret alternative does not block dropping a key that no alternative
+    declares: the key is not part of the secret subtree, and the service still
+    asks for `settings_edit_secret` before touching a secret-bearing union.
+    """
+    options = node.option_nodes or []
+    return any(option.read_only or option.const is not None for option in options)
 
 
 def _rename_hint(service: Any, registration: Any, parent: str, token: str) -> str | None:

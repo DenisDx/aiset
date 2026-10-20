@@ -952,15 +952,24 @@ class Service:
                     raise BadRequest(f"Key {new_key!r} does not match key_pattern")
             return
         if op == "drop":
-            if parent_node.type != "object":
-                raise BadRequest(f"Cannot drop a key from {parent_node.type} at {pointer!r}")
-            if parent_node.read_only:
-                raise Forbidden(f"Path {parent_pointer!r} is read-only")
             declared = self._node_for(state.registration, pointer, required=False)
             if declared is not None:
                 raise BadRequest(
                     f"Path {pointer!r} is declared; use remove, not drop"
                 )
+            if parent_node.type == "union":
+                # A drifted key inside a union member: no alternative declares it,
+                # so removing it cannot make the value match any alternative worse.
+                options = parent_node.option_nodes or []
+                if any(option.read_only or option.const is not None for option in options):
+                    raise Forbidden(f"Path {parent_pointer!r} contains a read-only shape")
+                if self._subtree_has_secret(parent_node) and not principal.has("settings_edit_secret"):
+                    raise SecretAccessDenied(f"Path {parent_pointer!r} is a secret subtree")
+                return
+            if parent_node.type != "object":
+                raise BadRequest(f"Cannot drop a key from {parent_node.type} at {pointer!r}")
+            if parent_node.read_only:
+                raise Forbidden(f"Path {parent_pointer!r} is read-only")
             if self._subtree_has_secret(parent_node) and not principal.has("settings_edit_secret"):
                 raise SecretAccessDenied(f"Path {parent_pointer!r} is a secret subtree")
             return
