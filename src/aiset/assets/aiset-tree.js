@@ -616,16 +616,57 @@
   // -- rendering -------------------------------------------------------
   TreeEditor.prototype._render = function () {
     this._envNames = {};
+    /* Clearing the tree collapses the scroll container for a moment, and the
+     * browser clamps its offset to the top; put the viewport back afterwards. */
+    var scroll = this._captureScroll();
     this.treeNode.innerHTML = "";
     var view = this._viewTree();
     if (!view || !view.node) {
       this.treeNode.appendChild(element("p", { text: "This path does not exist yet. Apply a change to create it." }));
       this._renderPending();
+      this._restoreScroll(scroll);
       return;
     }
     this.treeNode.appendChild(this._renderNode(view.node, true));
     this._renderPending();
+    this._restoreScroll(scroll);
     this._loadEnvPresence();
+  };
+
+  /* Scroll offsets of the host, every scrolling ancestor and the page, read
+   * before a full re-render. The host is not always the scroller: a host may be
+   * mounted inside a pane whose body owns `overflow: auto` (demo2). */
+  TreeEditor.prototype._captureScroll = function () {
+    var doc = global.document;
+    var root = doc && (doc.scrollingElement || doc.documentElement);
+    var panes = [];
+    var node = this.host;
+    while (node) {
+      panes.push({ node: node, top: node.scrollTop || 0, left: node.scrollLeft || 0 });
+      if (!node.parentElement) { break; }
+      node = node.parentElement;
+    }
+    return {
+      panes: panes,
+      pageTop: global.scrollY !== undefined ? global.scrollY : (root ? root.scrollTop : 0),
+      pageLeft: global.scrollX !== undefined ? global.scrollX : (root ? root.scrollLeft : 0)
+    };
+  };
+
+  /* Put the offsets read by `_captureScroll` back after the tree is rebuilt,
+   * innermost first; clearing the tree removes the overflow and the browser
+   * clamps every scroller above it. */
+  TreeEditor.prototype._restoreScroll = function (scroll) {
+    scroll.panes.forEach(function (entry) {
+      if (entry.node.scrollTop !== entry.top) { entry.node.scrollTop = entry.top; }
+      if (entry.node.scrollLeft !== entry.left) { entry.node.scrollLeft = entry.left; }
+    });
+    var pageTop = global.scrollY !== undefined ? global.scrollY : 0;
+    var pageLeft = global.scrollX !== undefined ? global.scrollX : 0;
+    if ((pageTop !== scroll.pageTop || pageLeft !== scroll.pageLeft) &&
+        typeof global.scrollTo === "function") {
+      global.scrollTo(scroll.pageLeft, scroll.pageTop);
+    }
   };
 
   /* -- the staged view -------------------------------------------------
@@ -688,6 +729,15 @@
    * subtree is not copied on every render. */
   TreeEditor.prototype._projectNode = function (node, path, index) {
     if (!node) { return null; }
+    /* A union array is an array for projection purposes: an append belongs to
+     * its items and carries the alternative's item shape. */
+    var unionOption = null;
+    if (node.type === "union") {
+      var unionOptions = (node.field && node.field.children_options) || [];
+      var unionActive = this._unionActive(node, unionOptions);
+      unionOption = unionActive >= 0 ? unionOptions[unionActive] : null;
+    }
+    var unionArray = !!(unionOption && unionOption.type === "array");
     var ownSet = index.sets[path];
     var ownRemove = index.removes[path];
     var ownAdds = index.adds[path] || [];
@@ -758,7 +808,8 @@
        * node. Each append gets its own concrete index, so several entries
        * staged in one batch stay distinct. */
       var addPath = this._resolvedAddPath(ownAdds[k]);
-      var fresh = this._newNode(addPath, ownAdds[k].operation.value_text, node, true);
+      var fresh = this._newNode(addPath, ownAdds[k].operation.value_text, node, true,
+        unionArray ? unionOption.children : undefined);
       additions.push(this._projectNode(fresh, fresh.path, index));
     }
     if (this.keyDrafts[path] && this._keyedObject(node)) {
@@ -771,7 +822,7 @@
       touched = true;
     }
     if (additions.length) {
-      var intoArray = node.type === "array";
+      var intoArray = node.type === "array" || unionArray;
       for (var a = 0; a < additions.length; a += 1) { additions[a].label = this._addLabel(node, additions[a]); }
       if (intoArray) {
         projectedItems = (projectedItems || items).concat(additions);
@@ -919,6 +970,7 @@
    * Dynamic keys (`items`) stay hidden until they exist: those are open
    * collections, not a fixed shape. */
   TreeEditor.prototype._visibleChildren = function (node) {
+    if (node.type === "union") { return this._unionVisibleChildren(node); }
     var children = (node.children || []).concat(node.items || []);
     if (this.showAbsent) { return children; }
     var fixed = node.children || [];
@@ -927,6 +979,161 @@
       if (child.exists !== false) { return true; }
       return isNewObject && fixed.indexOf(child) >= 0;
     });
+  };
+
+  /* The children of the active alternative. The snapshot's own nodes already
+   * describe the stored value; after a re-shape, or for a value the snapshot
+   * did not expand, they are built from the alternative's descriptor and the
+   * staged value. Synthetic children compose their edits into one set on the
+   * union: a child path of a string is not writable until the object exists. */
+  TreeEditor.prototype._unionVisibleChildren = function (node) {
+    var options = (node.field && node.field.children_options) || [];
+    var active = this._unionActive(node, options);
+    var option = active >= 0 ? options[active] : null;
+    if (!option || (option.type !== "object" && option.type !== "array")) { return []; }
+    /* The declared fields are the template of this shape: show them even when
+     * the global "show absent" preference is off. A union object is a form, not
+     * an arbitrary object whose unwritten keys should stay hidden. */
+    return this._unionChildren(node, option, active);
+  };
+
+  TreeEditor.prototype._unionChildren = function (node, option, active) {
+    var staged = this._stagedTextFor(node.path);
+    if (staged === undefined && node.matched_option === active) {
+      return (node.children || []).concat(node.items || []);
+    }
+    var text = staged !== undefined ? staged : node.value_text;
+    var value = this._parseFragment(text);
+    if (option.type === "object") {
+      if (!value || typeof value !== "object" || Array.isArray(value)) { value = {}; }
+      return this._declaredChildren(node.path, option, value, node.capabilities,
+        { path: node.path, keys: [], arrayRoot: false });
+    }
+    if (!Array.isArray(value)) { value = []; }
+    var items = value.slice();
+    /* A staged shape and a staged append can share one batch: the set writes
+     * the list, the add appends to it. */
+    this._pendingAdds(node.path).forEach(function (text) {
+      var parsed = this._parseFragment(text);
+      items.push(parsed === undefined ? text : parsed);
+    }, this);
+    var itemShape = option.children || { type: "any" };
+    return items.map(function (item, index) {
+      return this._syntheticNode(
+        node.path + "/" + index, itemShape, item, true, node.capabilities,
+        { path: node.path, keys: [index], arrayRoot: true }
+      );
+    }, this);
+  };
+
+  /* One child per declared key, present or not, for a shape that is not in the
+   * snapshot. `compose` remembers where the value must be written as a whole. */
+  TreeEditor.prototype._declaredChildren = function (parentPath, descriptor, value, caps, compose) {
+    var self = this;
+    var children = descriptor.children || {};
+    return Object.keys(children).map(function (key) {
+      var token = escapeToken(key);
+      var path = parentPath + "/" + token;
+      var has = Object.prototype.hasOwnProperty.call(value, key);
+      return self._syntheticNode(
+        path, children[key], has ? value[key] : undefined, has, caps,
+        { path: compose.path, keys: compose.keys.concat([key]), arrayRoot: compose.arrayRoot }
+      );
+    });
+  };
+
+  TreeEditor.prototype._syntheticNode = function (path, descriptor, value, exists, caps, compose) {
+    var self = this;
+    descriptor = descriptor || { type: "any" };
+    var type = descriptor.type || "any";
+    var node = {
+      path: path,
+      label: path.slice(path.lastIndexOf("/") + 1),
+      type: type,
+      kind: type === "object" ? "object" : (type === "array" ? "array" : "leaf"),
+      exists: !!exists,
+      access_denied: !!descriptor.secret,
+      origin: { kind: exists ? "file" : "absent" },
+      value_text: exists ? JSON.stringify(value) : null,
+      field: descriptor,
+      apply: descriptor.apply || null,
+      capabilities: Object.assign({}, caps || {}),
+      compose: compose,
+      children: [],
+      items: []
+    };
+    if (type === "object") {
+      var object = (exists && value && typeof value === "object" && !Array.isArray(value)) ? value : {};
+      node.children = this._declaredChildren(path, descriptor, object, caps, compose);
+    } else if (type === "array") {
+      var items = (exists && Array.isArray(value)) ? value : [];
+      var itemShape = descriptor.children || { type: "any" };
+      node.items = items.map(function (item, index) {
+        return self._syntheticNode(
+          path + "/" + index, itemShape, item, true, caps,
+          { path: compose.path, keys: compose.keys.concat([index]), arrayRoot: compose.arrayRoot }
+        );
+      });
+    }
+    return node;
+  };
+
+  /* Appends staged for this container, in the order they will run. */
+  TreeEditor.prototype._pendingAdds = function (path) {
+    var out = [];
+    this.pending.forEach(function (item) {
+      var operation = item.operation;
+      if (operation.op !== "add" || !operation.path) { return; }
+      var parent = operation.path.slice(0, operation.path.lastIndexOf("/"));
+      if (parent === path) { out.push(operation.value_text); }
+    });
+    return out;
+  };
+
+  /* The value a staged set will write here, if one is pending: the last wins,
+   * as it does when the batch is applied. */
+  TreeEditor.prototype._stagedTextFor = function (path) {
+    var text;
+    for (var i = 0; i < this.pending.length; i += 1) {
+      var operation = this.pending[i].operation;
+      if (operation.op === "set" && operation.path === path) { text = operation.value_text; }
+    }
+    return text;
+  };
+
+  TreeEditor.prototype._parseFragment = function (text) {
+    if (typeof text !== "string") { return undefined; }
+    try { return JSON.parse(text); } catch (error) { return undefined; }
+  };
+
+  /* A synthetic child has no path in the file yet: write the whole union value
+   * once, with the child changed in place. */
+  TreeEditor.prototype._composeStage = function (node, valueText) {
+    var compose = node.compose;
+    if (!compose.keys.length) { return; }
+    var baseText = this._stagedTextFor(compose.path);
+    if (baseText === undefined) {
+      var parent = this._find(compose.path);
+      baseText = parent ? parent.value_text : null;
+    }
+    var base = this._parseFragment(baseText);
+    if (compose.arrayRoot) {
+      if (!Array.isArray(base)) { base = []; }
+    } else if (!base || typeof base !== "object" || Array.isArray(base)) {
+      base = {};
+    }
+    var parsed = this._parseFragment(valueText);
+    if (parsed === undefined) { parsed = valueText; }
+    var target = base;
+    for (var i = 0; i < compose.keys.length - 1; i += 1) {
+      var key = compose.keys[i];
+      if (!target[key] || typeof target[key] !== "object") {
+        target[key] = typeof compose.keys[i + 1] === "number" ? [] : {};
+      }
+      target = target[key];
+    }
+    target[compose.keys[compose.keys.length - 1]] = parsed;
+    this.stageOperations([{ op: "set", path: compose.path, value_text: JSON.stringify(base) }], "user");
   };
 
   TreeEditor.prototype._renderNode = function (node, isRoot, parent) {
@@ -944,7 +1151,9 @@
     var row = element("div", { class: "aiset-tree-row" });
     var children = this._visibleChildren(node);
     var composite = children.length;
-    var isOpen = !!this.expanded[node.path];
+    var isOpen = this.expanded[node.path];
+    /* A structured union opens itself: its fields are the point of the shape. */
+    if (isOpen === undefined && node.type === "union" && composite) { isOpen = true; }
 
     /* An expandable node gets + and -; a leaf gets a coloured mark of its type
      * in the very same place, so the column always says what the node is. */
@@ -1079,18 +1288,19 @@
     if (node.access_denied) {
       return element("span", { class: "aiset-tree-secret", text: "hidden (secret)" });
     }
-    /* An object or array is edited through its children, or as raw source. */
-    if (isComposite(node)) { return null; }
     if (!caps.edit) {
       return element("span", { class: "aiset-tree-value aiset-tree-value-readonly", text: this._valueText(node) });
     }
     /* Raw mode shows the stored fragment below the row instead. */
     if (this.rawMode[node.path]) { return null; }
-    if (this._showsTemplate(node)) { return this._templateControl(node); }
-
+    /* A union always keeps its shape chooser, even when its alternative is a
+     * template or expands into children. */
     if (node.type === "union" && field.children_options && field.children_options.length) {
       return this._unionControl(node);
     }
+    /* An object or array is edited through its children, or as raw source. */
+    if (isComposite(node)) { return null; }
+    if (this._showsTemplate(node)) { return this._templateControl(node); }
     var wrap = element("span", { class: "aiset-tree-value" });
     var current = this._plainValueText(node);
     /* An unchecked box cannot say whether a bool is stored or false. */
@@ -1103,9 +1313,10 @@
     return wrap;
   };
 
-  /* A union is edited through the control of the alternative the value matches:
-   * an enum string becomes a select, an int a number field, an object stays the
-   * raw source. The shape chooser switches the alternative. */
+  /* A union is edited through the control of the alternative the value takes:
+   * an enum string becomes a select, an int a number field, a template keeps
+   * its variable and fallback, an object or array expands into its children.
+   * The shape chooser switches the alternative. */
   TreeEditor.prototype._unionControl = function (node) {
     var self = this;
     var options = (node.field && node.field.children_options) || [];
@@ -1115,9 +1326,18 @@
     if (active >= 0) {
       var option = options[active];
       var optNode = Object.assign({}, node, { type: option.type, field: option });
-      control = this._typedControl(optNode, this._plainValueText(node),
-        function (staged) { self._stage(node, staged); });
-      wrap.appendChild(control);
+      if (option.type === "object" || option.type === "array") {
+        /* _renderNode draws the alternative's children; the row keeps only the
+         * shape chooser, so an object is never a raw text area. */
+        control = null;
+      } else if (this._showsTemplate(node)) {
+        control = this._templateControl(optNode);
+        wrap.appendChild(control);
+      } else {
+        control = this._typedControl(optNode, this._plainValueText(node),
+          function (staged) { self._stage(node, staged); });
+        wrap.appendChild(control);
+      }
     }
     if ((node.field || {}).nullable) { wrap.appendChild(this._nullToggle(node, control || wrap)); }
     wrap.appendChild(this._typeChooser(node, options));
@@ -1125,7 +1345,8 @@
   };
 
   /* The alternative a union node is currently shown as: the shape the user
-   * picked, else the alternative the stored value matched (snapshot field). */
+   * picked, else the alternative the stored value matched (snapshot field),
+   * else the alternative its value text would take. */
   TreeEditor.prototype._unionActive = function (node, options) {
     var chosen = this.unionShape[node.path];
     if (typeof chosen === "number" && chosen >= 0 && chosen < options.length) { return chosen; }
@@ -1133,7 +1354,47 @@
         node.matched_option >= 0 && node.matched_option < options.length) {
       return node.matched_option;
     }
-    return -1;
+    return this._inferOption(node, options);
+  };
+
+  /* The alternative a stored fragment would take when the snapshot does not say:
+   * a literal by its first character, a substitution by its fallback. -1 when
+   * there is no value to read. */
+  TreeEditor.prototype._inferOption = function (node, options) {
+    var text = node.value_text;
+    if (typeof text !== "string") { return -1; }
+    var trimmed = text.trim();
+    if (!trimmed) { return -1; }
+    var type;
+    if (this._templateInfo(node)) {
+      type = "string";
+    } else if (trimmed[0] === '"' || trimmed[0] === "'") {
+      type = "string";
+    } else if (trimmed[0] === "{") {
+      type = "object";
+    } else if (trimmed[0] === "[") {
+      type = "array";
+    } else if (trimmed === "true" || trimmed === "false") {
+      type = "bool";
+    } else if (trimmed === "null") {
+      type = "null";
+    } else if (/^[+-]?\d+$/.test(trimmed)) {
+      type = "int";
+    } else if (/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed)) {
+      type = "number";
+    } else {
+      type = "string";
+    }
+    var fallback = -1;
+    for (var i = 0; i < options.length; i += 1) {
+      var optionType = options[i].type;
+      if (type === "null" && options[i].nullable) { return i; }
+      if (optionType === type) { return i; }
+      if (type === "int" && optionType === "number") { return i; }
+      /* A substitution edits as the string alternative when one exists. */
+      if (type === "string" && optionType === "string") { fallback = i; }
+    }
+    return fallback;
   };
 
   TreeEditor.prototype._sampleForOption = function (option) {
@@ -1525,15 +1786,31 @@
     var select = element("select", { "aria-label": "Value shape for " + node.path, class: "aiset-tree-shape" });
     select.appendChild(element("option", { value: "", text: "shape…" }));
     options.forEach(function (option, index) {
-      select.appendChild(element("option", { value: String(index), text: option.type }));
+      /* The type alone cannot tell eight object shapes apart; the descriptor's
+       * title or description can. Keep the type in the tooltip. */
+      var label = option.title || option.description || option.type;
+      if (label.length > 48) { label = label.slice(0, 45) + "…"; }
+      select.appendChild(element("option", {
+        value: String(index), text: label,
+        title: option.type + (option.description ? ": " + option.description : "")
+      }));
     });
     select.addEventListener("change", function () {
       if (select.value === "") { return; }
       var index = Number(select.value);
       var option = options[index];
       if (!option) { return; }
+      /* Picking the shape the value already has must not rewrite the file. */
+      var staged = self._stagedTextFor(node.path);
+      var text = staged !== undefined ? staged : node.value_text;
+      /* matched_option describes the file, not a value re-shaped in this batch. */
+      var matches = (staged === undefined && node.matched_option === index) ||
+        self._inferOption({ value_text: text }, options) === index;
       self.unionShape[node.path] = index;
-      self._stage(node, self._sampleForOption(option));
+      if (!matches) {
+        self._stage(node, self._sampleForOption(option));
+        self._setStatus("info", "shape " + option.type + ": the stored value was replaced");
+      }
       select.value = "";
     });
     return select;
@@ -1659,10 +1936,22 @@
     return wrap;
   };
 
+  /* The active alternative as a node of its own type: the controls that read
+   * `field` (item shape, new property) use the alternative, not the union. */
+  TreeEditor.prototype._shapeNode = function (node) {
+    if (node.type !== "union") { return node; }
+    var options = (node.field && node.field.children_options) || [];
+    var active = this._unionActive(node, options);
+    if (active < 0) { return node; }
+    return Object.assign({}, node, { type: options[active].type, field: options[active] });
+  };
+
   TreeEditor.prototype._addItemControl = function (node) {
     var self = this;
-    var options = (node.field && node.field.children_options) || [];
-    var shape = this._itemShape(node);
+    /* A union's children_options describe its shapes, not its items. */
+    var options = node.type === "union" ? []
+      : ((node.field && node.field.children_options) || []);
+    var shape = this._itemShape(this._shapeNode(node));
     var button = this._button("add", "Add an item", "plus", function () {
       if (options.length > 1) { self._showItemChooser(node); return; }
       /* The shape of the item decides the control the new row gets, and a new
@@ -1889,6 +2178,7 @@
   };
 
   TreeEditor.prototype._stage = function (node, valueText) {
+    if (node.compose) { this._composeStage(node, valueText); return; }
     this.stageOperations([{ op: "set", path: node.path, value_text: valueText }], "user");
   };
 
@@ -1966,7 +2256,15 @@
   }
 
   function isComposite(node) {
-    return node.type === "object" || node.type === "array";
+    if (node.type === "object" || node.type === "array") { return true; }
+    /* A union whose active alternative is a container expands like one. */
+    return node.type === "union" &&
+      (node.children || []).length + (node.items || []).length > 0;
+  }
+
+  /* JSON Pointer escaping, the same form the service uses in paths. */
+  function escapeToken(token) {
+    return String(token).replace(/~/g, "~0").replace(/\//g, "~1");
   }
 
   function unquote(text) {

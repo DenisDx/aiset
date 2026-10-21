@@ -8,6 +8,7 @@ import pytest
 
 from aiset.errors import Forbidden, NotFound, RevisionConflict, SecretAccessDenied, ValidationError
 from aiset.jsonsrc import Document
+from aiset.resolver import Resolver
 from aiset.service import Principal, Service
 from tests.conftest import DEMO_CONFIG, DEMO_DESCRIPTOR, EXAMPLES, copy_config, read
 
@@ -639,3 +640,106 @@ def test_http_operations_requires_a_list(service):
     client = Client(create_app(service))
     status, payload = client.post("/api/settings/operations", {"document": "demo", "operations": "nope"})
     assert status == 400 and payload["error"]["code"] == "BAD_REQUEST"
+
+# -- union alternatives ----------------------------------------------------
+
+UNION_DESCRIPTOR = """{
+  descriptor_version: "1.0",
+  project: "union-test",
+  config_version: "1.0",
+  root: { type: "object", children: {
+    tool: { type: "union", description: "a worker id or its settings", children_options: [
+      { type: "string", min_length: 1, description: "Worker id" },
+      { type: "object", description: "Worker settings", children: {
+        worker: { type: "string", description: "Worker id" },
+        name: { type: "string", description: "Display name" },
+        enabled: { type: "bool", description: "Enabled" },
+      } },
+      { type: "array", description: "A list of ports", children: { type: "int", minimum: 1 } },
+    ] },
+    secret_tool: { type: "union", children_options: [
+      { type: "string" },
+      { type: "object", children: { key: { type: "string", secret: true } } },
+    ] },
+  } },
+}"""
+
+
+def union_service(tmp_path: Path, config: str) -> Service:
+    """A service whose document has a scalar/object/array union under /tool."""
+    target = tmp_path / "union.json5"
+    target.write_text(config, encoding="utf-8")
+    svc = Service()
+    svc.register("union", target, UNION_DESCRIPTOR, resolver=Resolver(overrides={}, dotenv={}, environ={}))
+    return svc
+
+
+def test_tree_expands_the_object_alternative_of_a_union(tmp_path):
+    svc = union_service(tmp_path, '{ tool: { worker: "web_search" } }')
+    node = svc.tree("union", "/tool", principal=Principal.demo())["node"]
+    assert node["type"] == "union"
+    assert node["matched_option"] == 1
+    assert node["kind"] == "object"
+    children = {child["path"]: child for child in node["children"]}
+    assert set(children) == {"/tool/worker", "/tool/name", "/tool/enabled"}
+    assert children["/tool/worker"]["value_text"] == '"web_search"'
+    assert children["/tool/worker"]["exists"] is True
+    assert children["/tool/name"]["exists"] is False
+    assert children["/tool/name"]["type"] == "string"
+    assert children["/tool/enabled"]["type"] == "bool"
+
+
+def test_tree_expands_the_array_alternative_of_a_union(tmp_path):
+    svc = union_service(tmp_path, "{ tool: [8080, 8081] }")
+    node = svc.tree("union", "/tool", principal=Principal.demo())["node"]
+    assert node["matched_option"] == 2
+    assert node["kind"] == "array"
+    assert [item["path"] for item in node["items"]] == ["/tool/0", "/tool/1"]
+    assert [item["value_text"] for item in node["items"]] == ["8080", "8081"]
+    assert node["items"][0]["kind"] == "array_item"
+    assert node["items"][0]["capabilities"]["remove"] is True
+
+
+def test_tree_does_not_expand_a_scalar_union(tmp_path):
+    svc = union_service(tmp_path, '{ tool: "web_search" }')
+    node = svc.tree("union", "/tool", principal=Principal.demo())["node"]
+    assert node["matched_option"] == 0
+    assert node["children"] == [] and node["items"] == []
+
+
+def test_tree_denies_a_secret_inside_a_union_alternative(tmp_path):
+    svc = union_service(tmp_path, '{ secret_tool: { key: "s3cret" } }')
+    reader = Principal(id="reader", permissions=frozenset({"settings_read_source"}))
+    node = svc.tree("union", "/secret_tool", principal=reader)["node"]
+    assert node["access_denied"] is True
+    assert node["value_text"] is None
+
+
+def test_a_union_object_child_is_writable_by_its_path(tmp_path):
+    svc = union_service(tmp_path, '{ tool: { worker: "web_search" } }')
+    principal = Principal.demo()
+    loaded = svc.load("union", principal=principal)
+    svc.apply_operations(
+        "union",
+        [{"op": "set", "path": "/tool/worker", "value_text": '"web_fetch"'}],
+        expected_revision=loaded.revision,
+        expected_descriptor_revision=loaded.descriptor_revision,
+        principal=principal,
+    )
+    text = (tmp_path / "union.json5").read_text(encoding="utf-8")
+    assert 'worker: "web_fetch"' in text
+
+
+def test_a_union_array_item_can_be_appended(tmp_path):
+    svc = union_service(tmp_path, "{ tool: [8080] }")
+    principal = Principal.demo()
+    loaded = svc.load("union", principal=principal)
+    svc.apply_operations(
+        "union",
+        [{"op": "add", "path": "/tool/-", "value_text": "8081"}],
+        expected_revision=loaded.revision,
+        expected_descriptor_revision=loaded.descriptor_revision,
+        principal=principal,
+    )
+    text = (tmp_path / "union.json5").read_text(encoding="utf-8")
+    assert "8081" in text

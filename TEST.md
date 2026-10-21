@@ -130,6 +130,14 @@ rm -f demo2/config.json5 demo2/.env
 12. Apply the assistant proposal: unrelated comments and formatting survive.
 13. Configure an unreachable provider: the chat shows an explicit error.
 14. Check that no response or page contains the configured AI key.
+15. Open a worker tool stored in long form
+    (`tools.search: { worker: ... }`): the union row keeps the shape chooser and
+    expands `worker`, `name`, `description`, `enabled`, `inputSchema` and
+    `parameters`; it is not a raw JSON text area. Pick the stored shape again:
+    nothing is staged. Pick the string shape: a sample is staged and the status
+    says the value was replaced.
+16. Open `logging.level` with `${LOG_LEVEL:-error}`: the variable and its typed
+    fallback are editable, and the shape chooser is present.
 
 ## Not claimed
 
@@ -140,3 +148,13 @@ autonomous agent framework exist yet. The suite passing does not claim them.
 `tests/test_doctor.py` covers the doctor: the fix classes, the refusal to write a
 partially repaired file, secrets never appearing in the report, and the HTTP and
 CLI surfaces.
+
+`tests/test_tree_and_operations.py` covers union alternatives: an object or array
+value expands into the alternative's children/items, a scalar union stays a leaf,
+a secret inside an alternative is denied, and a union object child or array item
+is writable. The `test_tree_editor_public_api` smoke test covers the browser
+side: template unions keep the chooser, object alternatives expand without a
+text area, choosing the matching shape stages nothing, a synthetic shape
+composes one value, and a full re-render keeps the scroll position of the host
+and of a scrolling ancestor (the stub clamps both to the top when the tree is
+cleared, as a browser does).

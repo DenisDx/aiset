@@ -689,3 +689,36 @@ holds the reproductions and stays the record of what was asked for.
     host inspect documents without the startup error.
   - `tests/test_doctor.py`: 21 passed (union report, repair, declared-key refusal).
 
+
+- 2026-10-21. Implemented `proposal_improvement6.md` and
+  `proposal_improvement7.md`: union rendering and selection.
+  - `tree.py`: a union whose stored value validates as an object or array now
+    carries that alternative's `children`/`items`, and the alternative supplies
+    the container capabilities. `_items` uses the alternative's item node, so a
+    union array gets `array_item` rows (remove/reorder). `_subtree_has_secret`
+    now descends `option_nodes`/`item_node`, closing a leak where a secret inside
+    a union alternative looked readable.
+  - `aiset-tree.js`: a union row keeps the shape chooser even for a template; a
+    template is edited through the active alternative's type; the active shape
+    is inferred from `value_text` when `matched_option` is absent; chooser labels
+    use `title`/`description`; selecting the shape a value already has stages
+    nothing, and selecting another reports the replacement; an object/array
+    alternative expands as a normal subtree. A shape missing from the snapshot
+    gets synthetic children, and their edits compose one `set` on the union.
+    Appends to a union array project as items and keep their item shape.
+  - `SPEC_service.md` section 20 documents the union template and inference.
+  - Tests: `test_tree_and_operations.py` +6 (object/array expansion, scalar
+    union, secret denial, writable child, array append); union cases added to the
+    `test_tree_editor_public_api` smoke test.
+  - `./test.sh`: 462 passed (was 456).
+
+- 2026-10-21. Opening the raw editor (`{}`) no longer scrolls the view to the
+  top. `_render` cleared the tree, which briefly collapsed the scroll container
+  and made the browser clamp its offset to zero; `_captureScroll`/`_restoreScroll`
+  now save and restore the host, every scrolling ancestor and the page offsets
+  around the rebuild. The host is not always the scroller: demo2 scrolls
+  `.pane-body`, an ancestor of the mount, so restoring only the host left the
+  jump in place. The DOM smoke test simulates the clamp by resetting both the
+  host and an ancestor when the tree's `innerHTML` becomes empty. `./test.sh`:
+  462 passed (no new test count; the assertions live in
+  `test_tree_editor_public_api`).

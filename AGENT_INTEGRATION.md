@@ -340,10 +340,16 @@ placeholder mode (variable name + typed inline fallback; an empty name stores
 the inline value). A node whose descriptor sets `env.allowed` gets a `.env`
 button that switches it into placeholder mode.
 
-A `union` node is edited through the control of the alternative its value
-matched (`matched_option`): an enum string becomes a select, an `int`/`number` a
-number field, a `bool` a checkbox, a string a text field, an object/array the raw
-source. A `shape…` chooser switches the alternative and stages a sample of it.
+A `union` node is edited through the control of its active alternative: an enum
+string becomes a select, an `int`/`number` a number field, a `bool` a checkbox, a
+string a text field, a substitution its variable plus a typed fallback, and an
+object/array an expanded subtree. The active alternative is, in order, the shape
+the user picked, `matched_option`, or the one inferred from `value_text`. A
+union object/array alternative's declared keys are the template of the shape and
+are rendered even when `showAbsent` is off; if the snapshot does not contain the
+shape, its children are synthetic and a field edit composes one `set` on the
+union path. The `shape…` chooser never rewrites a value that already matches the
+chosen alternative, and stages a sample only when it replaces it.
 
 Browser rules that are not optional:
 

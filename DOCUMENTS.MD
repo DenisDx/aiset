@@ -12,6 +12,8 @@ every document and what it is responsible for, per the agent workflow in
 | [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) | Task-oriented integration guide for agents: hard rules, Python/HTTP/editor contracts, descriptor grammar in one screen, operations, permissions, error table, extension and testing checklists. Optimized for model consumption; points to the normative documents instead of repeating them. |
 | [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) | Implementation plan and work log: phases, completion marks, decisions and deviations. |
 | [proposal_demo2.md](proposal_demo2.md) | Proposed full demo2 host: reusable configuration tree, structural edits, AI chat, lifecycle actions, launcher, and acceptance contract. |
+| [proposal_improvement7.md](proposal_improvement7.md) | Implemented union object/array alternatives: the alternative's children are a structure, synthetic fields compose one value, and choosing the matching shape replaces nothing. |
+| [proposal_improvement6.md](proposal_improvement6.md) | Implemented union editing: a placeholder keeps the shape chooser, `matched_option` is inferred from the source value, and alternatives carry distinct labels. |
 | [proposal_doctor.md](proposal_doctor.md) | Proposal for a `doctor` API: validate a document, report every issue with a fix class, and optionally repair the mechanically fixable part; includes the host command contract. |
 | [TEST.md](TEST.md) | Test protocol: automated suite coverage, manual browser and demo protocol, acceptance matrix mapping. |
 | [commands.md](commands.md) | Real commands: local environment setup, demo start, tests, descriptor CLI. |

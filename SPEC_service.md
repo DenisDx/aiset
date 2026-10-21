@@ -894,6 +894,14 @@ node with a textarea holding the stored fragment, and leaving it stages one
 `set` operation only after the server accepted it; otherwise the server issues
 are shown and nothing is staged (SPEC_.md correction 4).
 
+A union chooses the alternative to show from, in order: the shape the user
+picked, the snapshot's `matched_option`, and the value text itself (a quoted
+string, an object, an array, a literal, or a substitution, which takes the
+string alternative). Choosing the alternative the value already matches changes
+no staged operation; choosing a different one stages a sample of that shape and
+reports that the stored value was replaced. Alternative labels come from the
+descriptor `title`, else its `description`, else the type.
+
 A node whose stored value is a placeholder renders two controls: the variable
 name and the inline fallback, the latter with the control of the declared type.
 Editing either rewrites the token instead of dropping the substitution, and an
@@ -904,10 +912,17 @@ snapshot never carries an environment value: `POST <base>/env` with
 more.
 
 An object or an array is edited through its children, never as a single value,
-so no composite value control is rendered. `options.showAbsent` (default
-`false`) and `instance.setShowAbsent()` decide whether the declared keys that the
-file does not contain are rendered; they carry `exists: false` and the usual
-`default` or `absent` badge. A leaf with nothing to show (an unwritten
+so no composite value control is rendered. A union whose active alternative is
+an object or an array expands the same way: the row keeps the shape chooser, and
+the alternative's declared keys are the template of that shape. They are
+rendered even when `options.showAbsent` is `false`, because an unwritten key is
+part of the form the alternative describes. A field of such a template is
+written as one `set` on the union path (the child path does not exist in the
+file until the union holds an object), so several field edits in one batch
+compose a single value. `options.showAbsent` (default `false`) and
+`instance.setShowAbsent()` decide whether the declared keys that the file does
+not contain are rendered for every other object; they carry `exists: false` and
+the usual `default` or `absent` badge. A leaf with nothing to show (an unwritten
 read-only node) renders a coloured type mark instead of an empty control:
 `i` for `int`, `n` for `number`, `"` for `string`, `b` for `bool` and `?` for any
 other type; red is never used. `options.valuesAsText` (default

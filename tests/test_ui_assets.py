@@ -104,6 +104,68 @@ const TREE = {
         capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
         children: [], items: [],
       }, {
+        /* A union object: the row keeps the chooser and the snapshot's own
+         * children carry the fields, so no raw text area is involved. */
+        path: "/server/tool", type: "union", exists: true, access_denied: false, kind: "object",
+        origin: { kind: "file" }, apply: "reload", value_text: '{"worker": "web_search"}',
+        matched_option: 1,
+        field: { type: "union", description: "worker id or settings",
+                 children_options: [
+                   { type: "string", min_length: 1, description: "Worker id" },
+                   { type: "object", description: "Worker settings",
+                     children: { worker: { type: "string", description: "Worker id" },
+                                 name: { type: "string", description: "Display name" },
+                                 enabled: { type: "bool", description: "Enabled" } } },
+                 ] },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: true, remove_child: false },
+        children: [{
+          path: "/server/tool/worker", type: "string", exists: true, access_denied: false, kind: "leaf",
+          origin: { kind: "file" }, apply: "reload", value_text: '"web_search"',
+          field: { type: "string", description: "Worker id" },
+          capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+          children: [], items: [],
+        }, {
+          path: "/server/tool/name", type: "string", exists: false, access_denied: false, kind: "leaf",
+          origin: { kind: "absent" }, apply: "reload", value_text: null,
+          field: { type: "string", description: "Display name" },
+          capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+          children: [], items: [],
+        }, {
+          path: "/server/tool/enabled", type: "bool", exists: false, access_denied: false, kind: "leaf",
+          origin: { kind: "absent" }, apply: "reload", value_text: null,
+          field: { type: "bool", description: "Enabled" },
+          capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+          children: [], items: [],
+        }],
+        items: [],
+      }, {
+        /* A union behind a placeholder: the snapshot has no matched_option, so
+         * the string alternative is inferred from the substitution. */
+        path: "/server/env_level", type: "union", exists: true, access_denied: false, kind: "leaf",
+        origin: { kind: "file" }, apply: "live", value_text: '"${LEVEL:-error}"',
+        template: { name: "LEVEL", default: "error" },
+        field: { type: "union", description: "int 0-7 or a named level",
+                 children_options: [
+                   { type: "int", minimum: 0, maximum: 7, description: "Numeric level" },
+                   { type: "string", enum: ["error", "info", "debug"], description: "Named level" },
+                 ] },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: false, remove_child: false },
+        children: [], items: [],
+      }, {
+        /* A string union that can become an object: the object is not in the
+         * snapshot, so its fields are synthetic and compose one value. */
+        path: "/server/tool_ref", type: "union", exists: true, access_denied: false, kind: "leaf",
+        origin: { kind: "file" }, apply: "reload", value_text: '"web_search"', matched_option: 0,
+        field: { type: "union", description: "worker id or settings",
+                 children_options: [
+                   { type: "string", min_length: 1, description: "Worker id" },
+                   { type: "object", description: "Worker settings",
+                     children: { worker: { type: "string", description: "Worker id" },
+                                 name: { type: "string", description: "Display name" } } },
+                 ] },
+        capabilities: { edit: true, add: false, remove: false, reorder: false, add_child: true, remove_child: false },
+        children: [], items: [],
+      }, {
         path: "/server/typed", type: "object", exists: true, access_denied: false, kind: "object",
         origin: { kind: "file" }, apply: "reload", value_text: "{\n  a: 1\n}",
         field: { type: "object", description: "typed element",
@@ -395,8 +457,10 @@ first.collapseAll();
 /* declared but unwritten keys are opt-in */
 assert(first.getShowAbsent() === false, "absent nodes are opt-in");
 const absentRows = (node) => node.dataset && node.dataset.absent === "true";
-assert(find(first.treeNode, absentRows) === null,
-       "an unwritten key must not be rendered until the host asks for it");
+/* A union object is a form: its declared fields are the template of the shape
+ * and are rendered even while show-absent is off (SPEC_service.md 20). */
+assert(find(first.treeNode, (node) => absentRows(node) && node.dataset.path === "/server/absent_int") === null,
+       "an unwritten key of a plain object stays hidden until the host asks for it");
 first.expandAll();
 first.setShowAbsent(true);
 assert(first.getShowAbsent() === true, "the absent option must be readable");
@@ -833,6 +897,88 @@ return submitted.then(() => {
   first.stageOperations([], "user");
   assert(first.unionShape["/server/log_level"] === undefined, "revert all clears the shapes");
 
+  /* Picking the alternative the value already has must not rewrite the file. */
+  const sameRow = first._renderNode(first._find("/server/log_level"), false);
+  const sameChooser = find(sameRow, (node) =>
+    String(node.tagName).toUpperCase() === "SELECT" && (node.className || "").indexOf("aiset-tree-shape") >= 0);
+  sameChooser.value = "1";
+  sameChooser.events.change();
+  assert(stagedFor("/server/log_level") === undefined,
+         "picking the alternative the value already matches writes nothing");
+  first.revert("/server/log_level");
+
+  /* A union object expands into the fields of the alternative, not a text area,
+   * and keeps the shape chooser in the row. */
+  first.expandAll();
+  const toolRow = first._renderNode(first._find("/server/tool"), false);
+  assert(!find(toolRow, (node) => String(node.tagName).toUpperCase() === "TEXTAREA"),
+         "a union object is not edited as a text area");
+  assert(find(toolRow, (node) => node.dataset && node.dataset.path === "/server/tool/name"),
+         "the alternative's declared fields are its template, even with show-absent off");
+  const toolChooser = find(toolRow, (node) =>
+    String(node.tagName).toUpperCase() === "SELECT" && (node.className || "").indexOf("aiset-tree-shape") >= 0);
+  assert(toolChooser, "a union object keeps its shape chooser");
+  toolChooser.value = "1";
+  toolChooser.events.change();
+  assert(stagedFor("/server/tool") === undefined, "and selecting its own shape changes nothing");
+  ["/server/tool/worker", "/server/tool/name", "/server/tool/enabled"].forEach((path) => {
+    assert(find(first.treeNode, (node) => node.dataset && node.dataset.path === path),
+           "the object alternative renders " + path);
+  });
+  const toolWorker = find(first.treeNode,
+    (node) => node.dataset && node.dataset.path === "/server/tool/worker");
+  const toolWorkerInput = find(toolWorker, (node) => String(node.tagName).toUpperCase() === "INPUT");
+  assert(toolWorkerInput && toolWorkerInput.value === "web_search",
+         "with the control and the stored value of the declared field");
+  first.revert("/server/tool");
+
+  /* A placeholder inside a union: the snapshot has no matched_option, yet the
+   * string alternative is inferred and its variable editor is shown. */
+  first.expandAll();
+  const envUnionRow = first._renderNode(first._find("/server/env_level"), false);
+  const envUnionName = find(envUnionRow, (node) => node.className === "aiset-tree-env");
+  assert(envUnionName && envUnionName.value === "LEVEL",
+         "a union placeholder edits its variable");
+  assert(find(envUnionRow, (node) =>
+    String(node.tagName).toUpperCase() === "SELECT" && (node.className || "").indexOf("aiset-tree-shape") >= 0),
+    "and keeps the shape chooser");
+  const envUnionEnum = find(envUnionRow, (node) =>
+    String(node.tagName).toUpperCase() === "SELECT" && (node.className || "").indexOf("aiset-tree-shape") < 0);
+  assert(envUnionEnum && envUnionEnum.children.some((option) => option.value === '"info"'),
+         "the inferred string alternative supplies its enum");
+  first.revert("/server/env_level");
+
+  /* A shape the snapshot does not contain yet: its fields are synthetic, and a
+   * field edit writes the whole union value instead of an unwritable child. */
+  first.expandAll();
+  const refRow = first._renderNode(first._find("/server/tool_ref"), false);
+  const refChooser = find(refRow, (node) =>
+    String(node.tagName).toUpperCase() === "SELECT" && (node.className || "").indexOf("aiset-tree-shape") >= 0);
+  refChooser.value = "1";
+  refChooser.events.change();
+  assert(stagedFor("/server/tool_ref").value_text === "{}",
+         "choosing the object shape starts from an empty object");
+  const syntheticWorker = find(first.treeNode,
+    (node) => node.dataset && node.dataset.path === "/server/tool_ref/worker");
+  assert(syntheticWorker, "the declared fields of a synthetic shape are rendered");
+  const syntheticInput = find(syntheticWorker,
+    (node) => String(node.tagName).toUpperCase() === "INPUT");
+  syntheticInput.value = "web_search";
+  syntheticInput.events.change();
+  const composed = stagedFor("/server/tool_ref");
+  assert(composed.path === "/server/tool_ref" && composed.value_text === '{"worker":"web_search"}',
+         "editing a synthetic field composes the whole union value");
+  /* matched_option still describes the file's old string; the staged object is
+   * the truth for the chooser, so switching back to string must stage a sample. */
+  const refBack = first._renderNode(first._find("/server/tool_ref"), false);
+  const refBackChooser = find(refBack, (node) =>
+    String(node.tagName).toUpperCase() === "SELECT" && (node.className || "").indexOf("aiset-tree-shape") >= 0);
+  refBackChooser.value = "0";
+  refBackChooser.events.change();
+  assert(stagedFor("/server/tool_ref").value_text === '""',
+         "a stale matched_option does not suppress the string sample");
+  first.revert("/server/tool_ref");
+
   /* An array that declares the shape of its items offers that shape: the new
    * row gets the control of the item type and the default of that type, and a
    * value typed into it belongs to the add instead of forming a second one. */
@@ -978,6 +1124,27 @@ return submitted.then(() => {
   assert(first.getPendingOperations().length === 0,
          "reverting every staged path clears the view again, whatever the operation");
   assert(hosts().items.length === 2, "and the tree is the snapshot again");
+
+  /* Clearing the tree for a full re-render removes the overflow; the browser
+   * clamps the host and every scrolling ancestor. demo2 scrolls .pane-body, an
+   * ancestor of the mount, so restoring only the host is not enough. */
+  const scrolled = first.treeNode;
+  const paneBody = doc.createElement();
+  first.host.parentElement = paneBody;
+  let html = scrolled.innerHTML;
+  Object.defineProperty(scrolled, "innerHTML", {
+    configurable: true,
+    get() { return html; },
+    set(value) {
+      html = value;
+      if (value === "") { first.host.scrollTop = 0; paneBody.scrollTop = 0; }
+    }
+  });
+  first.host.scrollTop = 240;
+  paneBody.scrollTop = 160;
+  first._render();
+  assert(first.host.scrollTop === 240, "a re-render keeps the host scroll position");
+  assert(paneBody.scrollTop === 160, "and the scroll position of a scrolling ancestor");
 })
 .then(() => {
   /* earlier blocks validate other fragments, so the commit is the last pair */

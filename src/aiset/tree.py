@@ -105,6 +105,7 @@ class _TreeBuilder:
         *,
         editable: bool,
         comments: Iterable[Any] = (),
+        kind_hint: str | None = None,
     ) -> dict[str, Any]:
         exists = True
         value_text = None
@@ -140,7 +141,25 @@ class _TreeBuilder:
             # A fragment containing an inaccessible secret is denied, not redacted.
             denied = True
 
-        kind = _kind_of(self.state.registration, node, path)
+        # The alternative a union value validated as. Its shape owns the
+        # children and the container capabilities; the union row only chooses
+        # between shapes.
+        active_option: Node | None = None
+        matched_option: int | None = None
+        if node is not None and node.type == "union" and stored is not MISSING:
+            matched_option = _matched_option(stored, node, path, self.limits)
+            if matched_option is not None:
+                active_option = node.option_nodes[matched_option]
+
+        kind = kind_hint or _kind_of(self.state.registration, node, path)
+        if active_option is not None and active_option.type in ("object", "array"):
+            kind = active_option.type
+        capability_node = active_option if active_option is not None else node
+        capabilities = self._capabilities(
+            path, capability_node, cst, kind=kind, editable=editable, denied=denied
+        )
+        if node is not None and node.read_only:
+            capabilities["edit"] = False
         notes = [text for text in (_comment_text(c) for c in comments) if text]
         entry: dict[str, Any] = {
             "path": path,
@@ -148,7 +167,7 @@ class _TreeBuilder:
             "access_denied": denied,
             "origin": origin,
             "kind": kind,
-            "capabilities": self._capabilities(path, node, cst, kind=kind, editable=editable, denied=denied),
+            "capabilities": capabilities,
         }
         if denied:
             entry["value_text"] = None
@@ -167,10 +186,8 @@ class _TreeBuilder:
             entry["field"] = node.describe()
             entry["apply"] = node.apply
             entry["type"] = node.type
-            if node.type == "union" and stored is not MISSING:
-                matched = _matched_option(stored, node, path, self.limits)
-                if matched is not None:
-                    entry["matched_option"] = matched
+            if matched_option is not None:
+                entry["matched_option"] = matched_option
         else:
             entry["type"] = "undeclared"
             entry["apply"] = None
@@ -181,8 +198,10 @@ class _TreeBuilder:
             entry["template"] = {"name": cst.name, "default": cst.default}
         if node is not None and node.additional_children is not None:
             entry["additional_child"] = node.additional_children.describe()
-        entry["children"] = self._children(path, node, cst, editable=editable)
-        entry["items"] = self._items(path, node, cst, editable=editable)
+        entry["children"] = self._children(
+            path, node, cst, editable=editable, active=active_option
+        )
+        entry["items"] = self._items(path, node, cst, editable=editable, active=active_option)
         return entry
 
     def _subtree_has_secret(self, node: Node | None) -> bool:
@@ -193,6 +212,11 @@ class _TreeBuilder:
         for child in (node.children or {}).values():
             if self._subtree_has_secret(child):
                 return True
+        for option in node.option_nodes or ():
+            if self._subtree_has_secret(option):
+                return True
+        if self._subtree_has_secret(node.item_node):
+            return True
         return self._subtree_has_secret(node.additional_children)
 
     # -- internals -------------------------------------------------------
@@ -249,14 +273,27 @@ class _TreeBuilder:
         caps.key_pattern = node.key_pattern
         return caps.to_dict()
 
-    def _children(self, path: str, node: Node | None, cst: Any, *, editable: bool) -> list[dict[str, Any]]:
+    def _children(
+        self,
+        path: str,
+        node: Node | None,
+        cst: Any,
+        *,
+        editable: bool,
+        active: Node | None = None,
+    ) -> list[dict[str, Any]]:
         """Stored members in file order, then declared members that are absent.
 
         A declared but unwritten key belongs to the snapshot as well, marked
         `exists: false`, so an editor can offer it without guessing the
         descriptor on its own. Hosts decide whether to render it.
+
+        `active` is the alternative a `union` value validated as; its object
+        shape supplies the declared keys, so a union object expands like any
+        other object.
         """
-        if node is None or node.type != "object":
+        descriptor = active if active is not None else node
+        if descriptor is None or descriptor.type != "object":
             return []
         out: list[dict[str, Any]] = []
         stored: set[str] = set()
@@ -271,15 +308,25 @@ class _TreeBuilder:
                         child_path, child_node, child.node, editable=editable, comments=child.leading
                     )
                 )
-        for name, child_node in (node.children or {}).items():
+        for name, child_node in (descriptor.children or {}).items():
             token = _escape(name)
             if token in stored:
                 continue
             out.append(self.build(f"{path}/{token}", child_node, None, editable=editable))
         return out
 
-    def _items(self, path: str, node: Node | None, cst: Any, *, editable: bool) -> list[dict[str, Any]]:
-        if node is None or node.type != "array" or not isinstance(cst, ArrayNode):
+    def _items(
+        self,
+        path: str,
+        node: Node | None,
+        cst: Any,
+        *,
+        editable: bool,
+        active: Node | None = None,
+    ) -> list[dict[str, Any]]:
+        """Array entries, from the node itself or from the array alternative of a union."""
+        descriptor = active if active is not None else node
+        if descriptor is None or descriptor.type != "array" or not isinstance(cst, ArrayNode):
             return []
         out: list[dict[str, Any]] = []
         for index, item in enumerate(cst.items):
@@ -287,10 +334,11 @@ class _TreeBuilder:
             out.append(
                 self.build(
                     item_path,
-                    _node_at(self.state.registration, item_path),
+                    descriptor.item_node,
                     item.node,
                     editable=editable,
                     comments=item.leading,
+                    kind_hint="array_item" if active is not None else None,
                 )
             )
         return out
