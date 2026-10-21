@@ -706,7 +706,7 @@ holds the reproductions and stays the record of what was asked for.
     alternative expands as a normal subtree. A shape missing from the snapshot
     gets synthetic children, and their edits compose one `set` on the union.
     Appends to a union array project as items and keep their item shape.
-  - `SPEC_service.md` section 20 documents the union template and inference.
+  - `SPEC_service.md` section 21 documents the union template and inference.
   - Tests: `test_tree_and_operations.py` +6 (object/array expansion, scalar
     union, secret denial, writable child, array append); union cases added to the
     `test_tree_editor_public_api` smoke test.
@@ -722,3 +722,22 @@ holds the reproductions and stays the record of what was asked for.
   host and an ancestor when the tree's `innerHTML` becomes empty. `./test.sh`:
   462 passed (no new test count; the assertions live in
   `test_tree_editor_public_api`).
+
+- 2026-10-21. Batch changed-path fix and integration-guide review.
+  - `_batch_changed_paths` walked the base document for every operation target
+    and raised `PathError` when an earlier operation created a container the base
+    did not have (`set /tool {}` then `set /tool/worker`). `_paths_safe` returns
+    no pointers for an absent path or a scalar prefix; a batch may now create and
+    fill a container in one candidate. Test:
+    `test_a_batch_can_create_a_container_and_fill_it`.
+  - `AGENT_INTEGRATION.md` was reviewed against the implementation and expanded
+    for a host agent: integration checklist, pinned install/submodule and the
+    namespace-package trap, the demo-principal default, mount-prefix vs `base`,
+    per-permission call lists, revision requirements, union snapshot expansion,
+    batch order, descriptor inheritance (`apply`/`secret`/`read_only`) and the
+    `required`+`default` conflict, `drop`/`rename`, proxy asset 404s, a
+    troubleshooting table, and corrected statements about automatic external
+    re-reads, helper/validator execution, and the host class-coverage check.
+  - `SPEC_service.md` 19 now names `children`/`items` for a union's expanded
+    alternative; 20 states that batch operations see the earlier operations.
+  - `./test.sh`: 463 passed (was 462).

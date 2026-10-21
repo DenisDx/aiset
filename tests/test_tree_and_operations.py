@@ -743,3 +743,24 @@ def test_a_union_array_item_can_be_appended(tmp_path):
     )
     text = (tmp_path / "union.json5").read_text(encoding="utf-8")
     assert "8081" in text
+
+
+def test_a_batch_can_create_a_container_and_fill_it(tmp_path):
+    """Operations run in order on one candidate; the base need not have the path."""
+    svc = union_service(tmp_path, '{ tool: "web_search" }')
+    principal = Principal.demo()
+    loaded = svc.load("union", principal=principal)
+    result = svc.apply_operations(
+        "union",
+        [
+            {"op": "set", "path": "/tool", "value_text": "{}"},
+            {"op": "set", "path": "/tool/worker", "value_text": '"web_fetch"'},
+        ],
+        expected_revision=loaded.revision,
+        expected_descriptor_revision=loaded.descriptor_revision,
+        principal=principal,
+    )
+    assert result.stored
+    assert "/tool" in result.changed_paths and "/tool/worker" in result.changed_paths
+    text = (tmp_path / "union.json5").read_text(encoding="utf-8")
+    assert 'worker: "web_fetch"' in text

@@ -1425,8 +1425,8 @@ class Service:
                     # An appended item changes the container, so report it too.
                     pointer = pointer[:-2]
                 base = pointer.rstrip("/")
-                touched.update(state.document.paths(base))
-                touched.update(candidate.paths(base))
+                touched.update(_paths_safe(state.document, base))
+                touched.update(_paths_safe(candidate, base))
             if operation.get("op") == "rename":
                 # The new key is a path too, and it exists only after the batch.
                 base = str(operation.get("path") or "")
@@ -1434,8 +1434,8 @@ class Service:
                 new_key = operation.get("to")
                 if isinstance(new_key, str) and new_key:
                     pointer = parent + "/" + escape(new_key)
-                    touched.update(state.document.paths(pointer))
-                    touched.update(candidate.paths(pointer))
+                    touched.update(_paths_safe(state.document, pointer))
+                    touched.update(_paths_safe(candidate, pointer))
         return sorted(touched)
 
     def _changed_paths(self, state: DocumentState, candidate_text: str, pointer: str) -> list[str]:
@@ -1444,7 +1444,7 @@ class Service:
             candidate = Document(candidate_text, origin=state.registration.store.path.name)
         except AisetError:  # pragma: no cover - defensive
             return [pointer]
-        return sorted(set(state.document.paths(pointer)) | set(candidate.paths(pointer)))
+        return sorted(set(_paths_safe(state.document, pointer)) | set(_paths_safe(candidate, pointer)))
 
     def _check_hook_capability(self, state: DocumentState, path: str, candidate: Document) -> None:
         """Recognized hook bindings are rejected, never silently ignored (SPEC.md 17).
@@ -1634,6 +1634,18 @@ class Rejection:
 
 async def _await_value(awaitable: Any) -> Any:
     return await awaitable
+
+
+def _paths_safe(document: Document, pointer: str) -> list[str]:
+    """Pointers under `pointer`, or none when the path is absent or crosses a scalar.
+
+    A batch may create the container and then address a child of it; the base
+    document does not have that container yet, so walking it must not raise.
+    """
+    try:
+        return document.paths(pointer)
+    except AisetError:
+        return []
 
 
 def _issue_summary(issues: list[ValueIssue]) -> str:

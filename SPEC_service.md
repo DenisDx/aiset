@@ -671,6 +671,7 @@ Each node carries:
 | `default_applied` | `true` when an effective default is shown |
 | `type`, `apply`, `field` | Descriptor metadata; `field` is the authorized node description |
 | `matched_option` | Index into `children_options` of the `union` alternative the stored value validated against; absent when none matches |
+| `children`, `items` | Child nodes. For a `union`, the active alternative's object children or array items; the union keeps `type: union` and its shape chooser. |
 | `access_denied` | `true` for a secret node the principal may not read; its values are omitted, never redacted |
 | `kind` | `array`, `array_item`, `object`, `dynamic_key`, `leaf`, or `undeclared` (decided by the parent) |
 | `capabilities` | `edit`, `add`, `remove`, `reorder`, `add_child`, `remove_child`, `key_options`, `key_pattern`; `unsupported` names a recognized-but-unexecuted capability (for example `hooks`), in which case every action is false |
@@ -761,8 +762,10 @@ Rules:
   match an alternative worse.
 - Every affected path is authorized (secret and read-only descendants included)
   and validated before anything is written.
-- Operations are applied in order to one candidate document; the first failure
-  aborts the batch and the file stays byte-for-byte unchanged.
+- Operations run in order against one candidate document: a later operation sees
+  the result of an earlier one, so a batch may create a container and then fill
+  it. The first failure aborts the batch and the file stays byte-for-byte
+  unchanged.
 - `apply_operations(..., dry_run=True)` requires only `settings_validate` and
   returns the issues without writing. `dry_run: true` marks the response.
 
