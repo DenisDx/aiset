@@ -741,3 +741,25 @@ holds the reproductions and stays the record of what was asked for.
   - `SPEC_service.md` 19 now names `children`/`items` for a union's expanded
     alternative; 20 states that batch operations see the earlier operations.
   - `./test.sh`: 463 passed (was 462).
+
+- 2026-10-23. Implemented `proposal_search.md`: browser-only tree search and
+  visible-path breadcrumbs.
+  - `aiset-tree.js`: sticky top strip with search box and result list; index over
+    keys, decoded paths, scalar values and descriptions (absent keys included,
+    secret values excluded, container source not duplicated); ranking, 50-result
+    cap, snippets, combobox/listbox keyboard handling; reveal expands the whole
+    ancestor chain, scrolls and focuses the row; context path follows the
+    topmost visible row via `elementFromPoint` with a row-scan fallback; added
+    `search`, `focusSearch`, `revealPath`, `getContextPath` and `contextchange`.
+  - `aiset.css` / `aiset-host-theme.css`: structural and visual rules for the
+    top strip, search results, hit highlight and context line.
+  - `SPEC_service.md` 21.1: ten new class rows.
+  - `demo2/frontend/app.js`: view-option checkboxes resync on `viewchange`, so
+    search-enabled show-absent is reflected by the host.
+  - `README.md`, `AGENT_INTEGRATION.md` and `TEST.md`: API, class inventory and
+    manual demo2 steps updated.
+  - `tests/test_ui_assets.py`: the existing DOM smoke test now covers search,
+    absent-key reveal, deep path focus/highlight and breadcrumb resolution.
+  - No Python source, route, descriptor or snapshot change.
+  - `./test.sh`: 463 passed (same count; assertions live in the existing smoke
+    test).

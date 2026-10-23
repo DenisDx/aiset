@@ -690,7 +690,7 @@ it is **not** loaded by `include_assets()`, so adopt it by linking it yourself.
 
 ### 8a.2 The class inventory
 
-`aiset-tree.js` emits 54 classes. This table is the contract; `aiset.classes()`
+`aiset-tree.js` emits 64 classes. This table is the contract; `aiset.classes()`
 returns the same list as data (`{name, element, role, required}`) - a library
 test parses the source and fails if the two disagree, so a host can write its
 coverage check against `aiset.classes()` instead of a regular expression over
@@ -717,6 +717,11 @@ readable tree. Everything else is design, and the host owns it.
 | `aiset-tree-name` | span | Key label, or a `.aiset-tree-key` input for a self-named child. |
 | `aiset-tree-value` | span | Wrapper around the value control(s). |
 | `aiset-tree-toolbar` | div | Holds Apply / Reload / Revert all / Expand all / Collapse all. |
+| `aiset-tree-topbar` | div | Sticky strip above the tree: search field and visible-path line. |
+| `aiset-tree-search` | div | Search field wrapper; anchors the result popup. |
+| `aiset-tree-search-results` | ul | Search result listbox. |
+| `aiset-tree-search-result` | li | One search hit (`option`). |
+| `aiset-tree-context` | nav | Visible-path breadcrumb under the search field. |
 | `aiset-tree-type <kind>` | span | Type mark of a leaf, in the toggle slot: `int`, `number`, `string`, `bool`, `container`, `other`. |
 
 **Node state**, on the node element, never on the row:
@@ -741,7 +746,9 @@ buttons), `aiset-tree-raw`, `aiset-tree-raw-title`,
 `aiset-tree-status` (+ `[data-state]` of `ok` / `error` / `pending` / `info`),
 `aiset-tree-issues`, `aiset-tree-pending`, `aiset-tree-staged`,
 `aiset-tree-staged-row`, `aiset-tree-staged-path`, `aiset-tree-staged-source`,
-`aiset-tree-staged-op`, `aiset-form`, `aiset-form-title`, `aiset-form-row`,
+`aiset-tree-staged-op`, `aiset-tree-search-input`, `aiset-tree-search-path`,
+`aiset-tree-search-snippet`, `aiset-tree-search-hit` (a revealed search target),
+`aiset-tree-context-path`, `aiset-form`, `aiset-form-title`, `aiset-form-row`,
 `aiset-form-label`, `aiset-form-field`, `aiset-form-control`, `aiset-form-actions`.
 
 ### 8a.3 The five traps

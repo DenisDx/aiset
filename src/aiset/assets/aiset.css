@@ -144,6 +144,112 @@
   margin-bottom: 8px;
 }
 
+/* Search and the visible-path line form the sticky top strip. The strip owns
+ * its background so tree rows scroll underneath it. */
+.aiset-tree-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 2px 0;
+  background: var(--aiset-surface);
+}
+
+.aiset-tree-search { position: relative; }
+
+.aiset-tree-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  color: var(--aiset-text);
+  background: var(--aiset-input-bg);
+  border: 1px solid var(--aiset-border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.aiset-tree-search-results {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 4;
+  max-height: 40vh;
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  list-style: none;
+  background: var(--aiset-input-bg);
+  border: 1px solid var(--aiset-border);
+  border-radius: 4px;
+}
+
+.aiset-tree-search-results[hidden] { display: none; }
+
+.aiset-tree-search-result {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px;
+  border-left: 2px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.aiset-tree-search-result:hover,
+.aiset-tree-search-result[aria-selected="true"] {
+  background: var(--aiset-surface-strong);
+  border-left-color: var(--aiset-accent);
+}
+
+.aiset-tree-search-result strong { color: var(--aiset-text); font-size: 13px; }
+.aiset-tree-search-result small { color: var(--aiset-muted); font-size: 11px; }
+
+.aiset-tree-search-path {
+  overflow: hidden;
+  color: var(--aiset-text-soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiset-tree-search-snippet {
+  overflow: hidden;
+  color: var(--aiset-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiset-tree-search-snippet mark {
+  color: var(--aiset-accent);
+  background: transparent;
+  font-weight: 700;
+}
+
+.aiset-tree-row.aiset-tree-search-hit {
+  background: var(--aiset-surface-strong);
+  box-shadow: inset 0 0 0 1px var(--aiset-accent);
+}
+
+.aiset-tree-context {
+  overflow: hidden;
+  padding: 2px 0;
+  color: var(--aiset-muted);
+  border-top: 1px solid var(--aiset-border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aiset-tree-context-path { display: block; }
+
 .aiset-tree-badges { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 
 .aiset-tree-pending { margin-top: 8px; }

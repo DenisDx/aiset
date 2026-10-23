@@ -30,6 +30,26 @@
 
 .aiset-tree-editor { color: var(--aiset-text); }
 .aiset-tree-toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 0; flex-wrap: wrap; }
+.aiset-tree-topbar { background: var(--aiset-surface); border-bottom: 1px solid var(--aiset-border); }
+.aiset-tree-search { position: relative; }
+.aiset-tree-search-input {
+  background: var(--aiset-input-bg); color: var(--aiset-text);
+  border: 1px solid var(--aiset-border); border-radius: 4px;
+}
+.aiset-tree-search-results {
+  background: var(--aiset-input-bg); border-color: var(--aiset-border);
+}
+.aiset-tree-search-result { border-left-color: transparent; }
+.aiset-tree-search-result:hover,
+.aiset-tree-search-result[aria-selected="true"] {
+  background: var(--aiset-surface-strong); border-left-color: var(--aiset-accent);
+}
+.aiset-tree-search-path { color: var(--aiset-muted); }
+.aiset-tree-search-snippet { color: var(--aiset-muted); }
+.aiset-tree-search-snippet mark { color: var(--aiset-accent); background: transparent; }
+.aiset-tree-search-hit { background: var(--aiset-surface-strong); }
+.aiset-tree-context { color: var(--aiset-muted); border-top-color: var(--aiset-border); }
+.aiset-tree-context-path { color: var(--aiset-muted); }
 .aiset-tree { display: block; }
 .aiset-tree-node { position: relative; }
 .aiset-tree-row { color: var(--aiset-text); }

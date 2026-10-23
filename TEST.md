@@ -138,6 +138,15 @@ rm -f demo2/config.json5 demo2/.env
     says the value was replaced.
 16. Open `logging.level` with `${LOG_LEVEL:-error}`: the variable and its typed
     fallback are editable, and the shape chooser is present.
+17. Type a key fragment in the search box: the result list opens; click a deep
+    result and every ancestor expands, the row scrolls into view, receives focus
+    and is highlighted.
+18. Search a scalar value and a description, not just a key. A container source
+    does not produce a duplicate parent result.
+19. Search a declared but unwritten key with **show absent** off: the view turns
+    it on to reveal the result, and the host checkbox follows.
+20. Scroll a long tree: the line at the bottom of the sticky top strip names the
+    full path to the topmost visible row, including ancestors above the viewport.
 
 ## Not claimed
 

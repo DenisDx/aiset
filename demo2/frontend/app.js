@@ -236,12 +236,20 @@
   }
 
   function bindTreeOptions(editor) {
+    function sync() {
+      VIEW_OPTIONS.forEach(function (option) {
+        var toggle = document.getElementById(option.id);
+        if (toggle) { toggle.checked = editor[option.read]() === true; }
+      });
+    }
     VIEW_OPTIONS.forEach(function (option) {
       var toggle = document.getElementById(option.id);
       if (!toggle) { return; }
       toggle.checked = editor[option.read]() === true;
       toggle.addEventListener("change", function () { editor[option.write](toggle.checked); });
     });
+    /* Search can enable show-absent to reveal a declared key. */
+    editor.on("viewchange", sync);
   }
 
   // -- startup ------------------------------------------------------------

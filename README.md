@@ -141,6 +141,12 @@ operations endpoint. `getPendingOperations`, `stageOperations`,
 `collapseAll`, `setValuesAsText` and `getValuesAsText` are available per
 mounted instance.
 
+A sticky search box above the tree finds keys, scalar values and descriptions;
+clicking a result expands the whole path, scrolls to the row and focuses it.
+`search`, `focusSearch` and `revealPath` are available programmatically, and the
+line at the bottom of the same sticky strip shows the path to the topmost
+visible row (`getContextPath`, plus a `contextchange` event).
+
 Objects and arrays are edited through their children; with `valuesAsText` (or
 `setValuesAsText(true)`) every composite node additionally shows its stored
 source fragment as a read-only text block, and with `showAbsent` (or

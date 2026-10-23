@@ -15,6 +15,7 @@ every document and what it is responsible for, per the agent workflow in
 | [proposal_improvement7.md](proposal_improvement7.md) | Implemented union object/array alternatives: the alternative's children are a structure, synthetic fields compose one value, and choosing the matching shape replaces nothing. |
 | [proposal_improvement6.md](proposal_improvement6.md) | Implemented union editing: a placeholder keeps the shape chooser, `matched_option` is inferred from the source value, and alternatives carry distinct labels. |
 | [proposal_doctor.md](proposal_doctor.md) | Proposal for a `doctor` API: validate a document, report every issue with a fix class, and optionally repair the mechanically fixable part; includes the host command contract. |
+| [proposal_search.md](proposal_search.md) | Implemented browser-only tree search over keys, values and descriptions, with expand/scroll/focus reveal, plus a sticky visible-path breadcrumb. |
 | [TEST.md](TEST.md) | Test protocol: automated suite coverage, manual browser and demo protocol, acceptance matrix mapping. |
 | [commands.md](commands.md) | Real commands: local environment setup, demo start, tests, descriptor CLI. |
 | [DOCUMENTS.MD](DOCUMENTS.MD) | This document map. |

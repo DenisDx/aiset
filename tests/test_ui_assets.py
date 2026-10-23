@@ -37,7 +37,9 @@ function stubElement() {
     querySelector() { return stubElement(); },
     querySelectorAll() { return []; }, closest() { return null; },
     appendChild(child) { this.children.push(child); return child; },
-    cloneNode() { return stubElement(); }, focus() {},
+    cloneNode() { return stubElement(); },
+    focus(options) { this.focused = true; this.focusOptions = options || null; },
+    scrollIntoView(options) { this.scrolled = options || null; },
   };
   return node;
 }
@@ -1124,6 +1126,76 @@ return submitted.then(() => {
   assert(first.getPendingOperations().length === 0,
          "reverting every staged path clears the view again, whatever the operation");
   assert(hosts().items.length === 2, "and the tree is the snapshot again");
+
+  /* Search covers keys, scalar values and descriptions, ignores composite
+   * source, and reveals a deep path by expanding every ancestor. */
+  const keyHits = first.search("level");
+  assert(keyHits.length && keyHits[0].path === "/server/level",
+         "an exact key hit ranks first");
+  const valueHits = first.search("10.0.0.1");
+  assert(valueHits.some((hit) => hit.path === "/server/hosts/1"),
+         "a scalar value is searchable");
+  assert(!valueHits.some((hit) => hit.path === "/server/hosts"),
+         "a container source is not indexed as its own value");
+  assert(first.search("switch").some((hit) => hit.path === "/server/enabled"),
+         "a field description is searchable");
+  assert(first.search("LEVEL").some((hit) => hit.path === "/server/level"),
+         "search is case-insensitive");
+  assert(first.search("server level").some((hit) => hit.path === "/server/level"),
+         "every query term must match");
+  assert(first.search("nothing-matches-this").length === 0, "no match returns no results");
+  assert(first.searchResultsNode.hidden === false, "the empty state keeps the list visible");
+  first.search("");
+  assert(first.searchResultsNode.hidden === true, "an empty query closes the list");
+
+  const absentHits = first.search("absent_int");
+  assert(absentHits.some((hit) => hit.path === "/server/absent_int" && hit.exists === false),
+         "an absent declared key is searchable");
+  assert(first.getShowAbsent() === false, "absent search does not change the view by itself");
+  first.setShowAbsent(false);
+  first.collapseAll();
+  assert(first.revealPath("/server/absent_int") === true, "revealing an absent key succeeds");
+  assert(first.getShowAbsent() === true, "the view turns on show-absent to reveal it");
+  assert(first.isExpanded("/server") === true && first.isExpanded("/server/absent_int") === true,
+         "the whole path is expanded");
+  first.setShowAbsent(false);
+
+  first.collapseAll();
+  assert(first.revealPath("/server/hosts/1") === true, "a deep path can be revealed");
+  assert(first.isExpanded("/server") && first.isExpanded("/server/hosts") &&
+         first.isExpanded("/server/hosts/1"), "every ancestor and the target are open");
+  const revealedRow = first._rowByPath["/server/hosts/1"];
+  assert(revealedRow && revealedRow.focused, "the target row receives focus");
+  assert(revealedRow.className.indexOf("aiset-tree-search-hit") >= 0,
+         "the target row is highlighted");
+  assert(revealedRow.tabIndex === "-1" || revealedRow.tabindex === "-1",
+         "a row is programmatically focusable without joining the tab order");
+
+  /* The breadcrumb names the first row below the sticky top strip, including
+   * ancestors that have scrolled out of view. */
+  const contextEvents = [];
+  first.on("contextchange", (payload) => contextEvents.push(payload.path));
+  const rects = {};
+  first._renderedRows.forEach((entry) => {
+    rects[entry.path] = { top: 80, bottom: 125 };
+    entry.row.getBoundingClientRect = () => rects[entry.path];
+  });
+  doc.scrollingElement = {
+    scrollTop: 0, scrollLeft: 0,
+    getBoundingClientRect: () => ({ top: 100, left: 0 })
+  };
+  first.topbar.getBoundingClientRect = () => ({ top: 100, bottom: 130, left: 0 });
+  rects["/server"] = { top: 130, bottom: 150 };
+  first._updateContext();
+  assert(first.getContextPath() === "/server", "the top visible row is /server");
+  assert(first.contextPathNode.textContent === "/ server", "the breadcrumb shows the path");
+  rects["/server"] = { top: 80, bottom: 125 };
+  rects["/server/hosts"] = { top: 130, bottom: 150 };
+  first._updateContext();
+  assert(first.getContextPath() === "/server/hosts",
+         "after scrolling, the hidden parent is still part of the path");
+  assert(contextEvents.join("|") === "/server|/server/hosts",
+         "contextchange fires once per changed path");
 
   /* Clearing the tree for a full re-render removes the overflow; the browser
    * clamps the host and every scrolling ancestor. demo2 scrolls .pane-body, an

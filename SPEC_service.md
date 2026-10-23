@@ -963,6 +963,16 @@ than a request. The rest is optional polish (AGENT_INTEGRATION.md section 8a).
 |---|---|---|---|
 | `aiset-tree-editor` | div | root | yes |
 | `aiset-tree-toolbar` | div | toolbar | yes |
+| `aiset-tree-topbar` | div | structure | yes |
+| `aiset-tree-search` | div | structure | yes |
+| `aiset-tree-search-input` | input | control | no |
+| `aiset-tree-search-results` | ul | structure | yes |
+| `aiset-tree-search-result` | li | action | yes |
+| `aiset-tree-search-path` | span | text | no |
+| `aiset-tree-search-snippet` | span | text | no |
+| `aiset-tree-search-hit` | div | structure | no |
+| `aiset-tree-context` | nav | structure | yes |
+| `aiset-tree-context-path` | span | text | no |
 | `aiset-tree` | div | tree | yes |
 | `aiset-tree-node` | div | structure | yes |
 | `aiset-tree-row` | div | structure | yes |

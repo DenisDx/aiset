@@ -37,6 +37,16 @@
   var CLASS_INVENTORY = [
     { name: "aiset-tree-editor", element: "div", role: "root", required: true },
     { name: "aiset-tree-toolbar", element: "div", role: "toolbar", required: true },
+    { name: "aiset-tree-topbar", element: "div", role: "structure", required: true },
+    { name: "aiset-tree-search", element: "div", role: "structure", required: true },
+    { name: "aiset-tree-search-input", element: "input", role: "control", required: false },
+    { name: "aiset-tree-search-results", element: "ul", role: "structure", required: true },
+    { name: "aiset-tree-search-result", element: "li", role: "action", required: true },
+    { name: "aiset-tree-search-path", element: "span", role: "text", required: false },
+    { name: "aiset-tree-search-snippet", element: "span", role: "text", required: false },
+    { name: "aiset-tree-search-hit", element: "div", role: "structure", required: false },
+    { name: "aiset-tree-context", element: "nav", role: "structure", required: true },
+    { name: "aiset-tree-context-path", element: "span", role: "text", required: false },
     { name: "aiset-tree", element: "div", role: "tree", required: true },
     { name: "aiset-tree-node", element: "div", role: "structure", required: true },
     { name: "aiset-tree-row", element: "div", role: "structure", required: true },
@@ -91,6 +101,9 @@
     { name: "aiset-form-actions", element: "div", role: "form", required: false },
   ];
 
+  /* A per-instance id keeps two editors on one page from sharing DOM ids. */
+  var editorSeq = 0;
+
   function request(base, method, path, body) {
     var options = { method: method, headers: { Accept: "application/json" } };
     if (body !== undefined) {
@@ -139,7 +152,7 @@
       else if (key === "dataset") { Object.keys(attrs.dataset).forEach(function (d) { node.dataset[d] = attrs.dataset[d]; }); }
       /* Boolean attributes are disabled by their presence: set them as
        * properties, because setAttribute("disabled", false) still disables. */
-      else if (key === "disabled" || key === "checked" || key === "readonly" || key === "required") {
+      else if (key === "disabled" || key === "checked" || key === "readonly" || key === "required" || key === "hidden") {
         node[key] = attrs[key] === true || attrs[key] === "true";
       }
       else if (attrs[key] !== null && attrs[key] !== undefined) { node.setAttribute(key, attrs[key]); }
@@ -149,6 +162,38 @@
   }
 
   function label(text) { return document.createTextNode(text); }
+
+  /* The page document: a browser exposes it on window, the DOM test stub on the
+   * Node global only. */
+  function pageDocument() {
+    return global.document || (typeof document !== "undefined" ? document : null);
+  }
+
+  /* Remove one class without requiring classList (the DOM test stub has only
+   * className). */
+  function removeClass(node, name) {
+    if (!node || !name) { return; }
+    if (node.classList && node.classList.remove) { node.classList.remove(name); return; }
+    node.className = String(node.className || "").split(/\s+/)
+      .filter(function (part) { return part && part !== name; }).join(" ");
+  }
+
+  /* "~1" is a slash and "~0" a tilde in a JSON Pointer token. */
+  function decodeToken(token) {
+    return String(token === undefined || token === null ? "" : token)
+      .replace(/~1/g, "/").replace(/~0/g, "~");
+  }
+
+  function decodedPath(path) {
+    if (!path) { return "/"; }
+    return "/" + String(path).split("/").filter(Boolean).map(decodeToken).join("/");
+  }
+
+  /* Human form of the breadcrumb: "/ workers / items / name". */
+  function formatContextPath(path) {
+    if (!path) { return "/"; }
+    return "/ " + String(path).split("/").filter(Boolean).map(decodeToken).join(" / ");
+  }
 
   function TreeEditor(host, options) {
     this.host = host;
@@ -175,10 +220,36 @@
     this._envNames = {};
     this.handlers = {};
     this.busy = false;
+    /* Search and breadcrumb state (proposal_search.md). */
+    this._uid = "aiset-tree-" + (++editorSeq);
+    this.searchQuery = "";
+    this.searchResultsData = [];
+    this.searchActive = -1;
+    this._searchTimer = null;
+    this._searchHitPath = null;
+    this._rowByPath = {};
+    this._renderedRows = [];
+    this._contextPath = "";
+    this._contextFrame = 0;
+    this._pendingReveal = null;
     this._renderShell();
     var self = this;
-    this._onResize = function () { self._fitAllRaw(); };
+    this._onResize = function () { self._fitAllRaw(); self._scheduleContextUpdate(); };
     if (global.addEventListener) { global.addEventListener("resize", this._onResize); }
+    this._onScroll = function () { self._scheduleContextUpdate(); };
+    if (pageDocument() && pageDocument().addEventListener) {
+      /* scroll does not bubble; capture sees the host pane as well as the page */
+      pageDocument().addEventListener("scroll", this._onScroll, true);
+    }
+    this._onPointerDown = function (event) {
+      if (self.searchNode && self.searchNode.contains && event && event.target &&
+          !self.searchNode.contains(event.target)) {
+        self._closeSearch();
+      }
+    };
+    if (pageDocument() && pageDocument().addEventListener) {
+      pageDocument().addEventListener("pointerdown", this._onPointerDown, true);
+    }
     this.ready = this.reload();
   }
 
@@ -188,13 +259,42 @@
     this.statusNode = element("div", { class: "aiset-tree-status", role: "status", "aria-live": "polite" });
     this.issuesNode = element("ul", { class: "aiset-tree-issues" });
     this.treeNode = element("div", { class: "aiset-tree", role: "tree" });
+
+    this.topbar = element("div", { class: "aiset-tree-topbar" });
+    this.searchNode = element("div", { class: "aiset-tree-search" });
+    this.searchInput = element("input", {
+      type: "search", class: "aiset-tree-search-input",
+      placeholder: "Search keys, values, descriptions",
+      "aria-label": "Search keys, values and descriptions",
+      role: "combobox", "aria-autocomplete": "list",
+      "aria-expanded": "false", "aria-controls": this._uid + "-search-results",
+      autocomplete: "off", spellcheck: "false"
+    });
+    this.searchResultsNode = element("ul", {
+      class: "aiset-tree-search-results", id: this._uid + "-search-results",
+      role: "listbox", "aria-label": "Search results", hidden: true
+    });
+    this.searchNode.appendChild(this.searchInput);
+    this.searchNode.appendChild(this.searchResultsNode);
+    this.contextNode = element("nav", {
+      class: "aiset-tree-context", "aria-label": "Visible location"
+    });
+    this.contextPathNode = element("span", {
+      class: "aiset-tree-context-path", text: "/"
+    });
+    this.contextNode.appendChild(this.contextPathNode);
+    this.topbar.appendChild(this.searchNode);
+    this.topbar.appendChild(this.contextNode);
+
     this.pendingNode = element("div", { class: "aiset-tree-pending" });
     this.host.appendChild(this.toolbar);
+    this.host.appendChild(this.topbar);
     this.host.appendChild(this.treeNode);
     this.host.appendChild(this.pendingNode);
     this.host.appendChild(this.statusNode);
     this.host.appendChild(this.issuesNode);
     this._renderToolbar();
+    this._bindSearch();
   };
 
   TreeEditor.prototype._renderToolbar = function () {
@@ -224,6 +324,430 @@
     button.textContent = text;
     button.addEventListener("click", handler);
     return button;
+  };
+
+  // -- search and visible context (proposal_search.md) -------------------
+
+  TreeEditor.prototype._bindSearch = function () {
+    var self = this;
+    this.searchInput.addEventListener("input", function () { self._scheduleSearch(); });
+    this.searchInput.addEventListener("keydown", function (event) { self._onSearchKeyDown(event); });
+    this.searchInput.addEventListener("focus", function () {
+      if (String(self.searchInput.value || "").trim()) { self._runSearch(); }
+    });
+  };
+
+  /* Typing is debounced; the public search() below stays synchronous. */
+  TreeEditor.prototype._scheduleSearch = function () {
+    var self = this;
+    if (this._searchTimer && global.clearTimeout) { global.clearTimeout(this._searchTimer); }
+    this._searchTimer = global.setTimeout(function () {
+      self._searchTimer = null;
+      self._runSearch();
+    }, 70);
+  };
+
+  TreeEditor.prototype._onSearchKeyDown = function (event) {
+    if (!event) { return; }
+    var key = event.key;
+    if (key === "Escape") {
+      this._closeSearch(true);
+      if (event.preventDefault) { event.preventDefault(); }
+      return;
+    }
+    if (key === "Tab") { this._closeSearch(false); return; }
+    if (key === "ArrowDown" || key === "ArrowUp") {
+      var step = key === "ArrowDown" ? 1 : -1;
+      if (this.searchResultsNode.hidden) {
+        this._runSearch();
+        if (this.searchResultsData.length) {
+          this._setSearchActive(step > 0 ? 0 : this.searchResultsData.length - 1);
+        }
+      } else if (this.searchResultsData.length) {
+        var next = this.searchActive + step;
+        if (next < 0) { next = this.searchResultsData.length - 1; }
+        if (next >= this.searchResultsData.length) { next = 0; }
+        this._setSearchActive(next);
+      }
+      if (event.preventDefault) { event.preventDefault(); }
+      return;
+    }
+    if (key === "Enter") {
+      if (this.searchResultsNode.hidden) { this._runSearch(); }
+      if (!this.searchResultsData.length) { return; }
+      var index = this.searchActive >= 0 ? this.searchActive : 0;
+      if (event.preventDefault) { event.preventDefault(); }
+      this._activateSearchResult(index);
+    }
+  };
+
+  /* Children for search. Unlike _visibleChildren this keeps absent keys, so a
+   * declared key can be found even while "show absent" is off. */
+  TreeEditor.prototype._searchChildren = function (node) {
+    if (node.type === "union") { return this._unionVisibleChildren(node); }
+    return (node.children || []).concat(node.items || []);
+  };
+
+  /* A scalar's search text. Container source is deliberately not indexed: it
+   * repeats every child value and would return the parent for each hit. */
+  TreeEditor.prototype._searchValue = function (node) {
+    if (!node || node.access_denied) { return ""; }
+    if (node.type === "object" || node.type === "array") { return ""; }
+    if (node.type === "union") {
+      var options = (node.field && node.field.children_options) || [];
+      var active = this._unionActive(node, options);
+      var option = active >= 0 ? options[active] : null;
+      if (option && (option.type === "object" || option.type === "array")) { return ""; }
+    }
+    return this._plainText(node);
+  };
+
+  TreeEditor.prototype._searchIndex = function () {
+    var view = this._viewTree();
+    var out = [];
+    var self = this;
+    (function walk(node) {
+      if (!node) { return; }
+      if (node.path) {
+        var token = decodeToken(node.path.slice(node.path.lastIndexOf("/") + 1));
+        var keyLabel = node.label || token;
+        var value = self._searchValue(node);
+        var description = [node.field && node.field.title, node.field && node.field.description]
+          .filter(function (part) { return part !== undefined && part !== null && part !== ""; })
+          .map(String).join(" ");
+        out.push({
+          path: node.path,
+          keyLabel: keyLabel,
+          key: (keyLabel + " " + token).toLowerCase(),
+          pathText: decodedPath(node.path).toLowerCase(),
+          value: String(value === null || value === undefined ? "" : value),
+          valueText: String(value === null || value === undefined ? "" : value).toLowerCase(),
+          description: description,
+          descriptionText: description.toLowerCase(),
+          type: node.type || "any",
+          exists: node.exists !== false
+        });
+      }
+      self._searchChildren(node).forEach(walk);
+    })(view && view.node);
+    return out;
+  };
+
+  /* Every term must hit one field; the score is the sum of the best hits. */
+  TreeEditor.prototype._matchSearch = function (entry, terms) {
+    var score = 0;
+    var kinds = {};
+    for (var i = 0; i < terms.length; i += 1) {
+      var term = terms[i];
+      var best = 0;
+      if (entry.key === term) { best = 100; kinds.key = true; }
+      else if (entry.key.indexOf(term) === 0) { best = 80; kinds.key = true; }
+      else if (entry.key.indexOf(term) >= 0) { best = 60; kinds.key = true; }
+      else if (entry.pathText.indexOf(term) >= 0) { best = 50; kinds.key = true; }
+      if (entry.valueText.indexOf(term) >= 0) {
+        kinds.value = true;
+        if (best < 35) { best = 35; }
+      }
+      if (entry.descriptionText.indexOf(term) >= 0) {
+        kinds.description = true;
+        if (best < 25) { best = 25; }
+      }
+      if (!best) { return null; }
+      score += best;
+    }
+    return { score: score, kinds: Object.keys(kinds) };
+  };
+
+  /* A small window around the match; the pieces let the renderer use <mark>. */
+  TreeEditor.prototype._snippetParts = function (text, term, radius) {
+    if (!text || !term) { return null; }
+    var flat = String(text).replace(/\s+/g, " ").trim();
+    var index = flat.toLowerCase().indexOf(String(term).toLowerCase());
+    if (index < 0) { return null; }
+    var start = Math.max(0, index - radius);
+    var end = Math.min(flat.length, index + String(term).length + radius);
+    return {
+      before: (start > 0 ? "\u2026" : "") + flat.slice(start, index),
+      match: flat.slice(index, index + String(term).length),
+      after: flat.slice(index + String(term).length, end) + (end < flat.length ? "\u2026" : "")
+    };
+  };
+
+  TreeEditor.prototype.search = function (text) {
+    this.searchInput.value = text === null || text === undefined ? "" : String(text);
+    return this._runSearch();
+  };
+
+  TreeEditor.prototype._runSearch = function () {
+    if (this._searchTimer && global.clearTimeout) {
+      global.clearTimeout(this._searchTimer);
+      this._searchTimer = null;
+    }
+    this.searchQuery = String(this.searchInput.value || "").trim();
+    if (!this.searchQuery) {
+      this.searchResultsData = [];
+      this._searchTotal = 0;
+      this._closeSearch(true);
+      return [];
+    }
+    var terms = this.searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    var matches = [];
+    this._searchIndex().forEach(function (entry) {
+      var match = this._matchSearch(entry, terms);
+      if (!match) { return; }
+      var snippet = null;
+      var snippetKind = null;
+      for (var i = 0; i < terms.length; i += 1) {
+        if (entry.valueText.indexOf(terms[i]) >= 0) {
+          snippet = this._snippetParts(entry.value, terms[i], 48);
+          snippetKind = "value";
+          break;
+        }
+      }
+      if (!snippet) {
+        for (var j = 0; j < terms.length; j += 1) {
+          if (entry.descriptionText.indexOf(terms[j]) >= 0) {
+            snippet = this._snippetParts(entry.description, terms[j], 48);
+            snippetKind = "description";
+            break;
+          }
+        }
+      }
+      matches.push({
+        path: entry.path, keyLabel: entry.keyLabel, type: entry.type,
+        exists: entry.exists, score: match.score, kinds: match.kinds,
+        snippet: snippet, snippetKind: snippetKind
+      });
+    }, this);
+    matches.sort(function (a, b) {
+      if (b.score !== a.score) { return b.score - a.score; }
+      return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0);
+    });
+    var total = matches.length;
+    this.searchResultsData = matches.slice(0, 50);
+    this._searchTotal = total;
+    this._renderSearchResults(total);
+    return this.searchResultsData.slice();
+  };
+
+  TreeEditor.prototype._renderSearchResults = function (total) {
+    var self = this;
+    this.searchResultsNode.innerHTML = "";
+    this.searchActive = this.searchResultsData.length ? 0 : -1;
+    if (!this.searchResultsData.length) {
+      this.searchResultsNode.appendChild(element("li", { role: "status", text: "No matches" }));
+      this.searchResultsNode.hidden = false;
+      this.searchInput.setAttribute("aria-expanded", "true");
+      this.searchInput.setAttribute("aria-activedescendant", "");
+      return;
+    }
+    this.searchResultsData.forEach(function (result, index) {
+      var item = element("li", {
+        class: "aiset-tree-search-result", role: "option",
+        id: self._uid + "-search-result-" + index,
+        "aria-selected": index === 0 ? "true" : "false"
+      });
+      item.appendChild(element("strong", { text: result.keyLabel }));
+      item.appendChild(element("small", {
+        text: result.kinds.join(" / ") + " \u00b7 " + result.type +
+          (result.exists ? "" : " \u00b7 absent")
+      }));
+      item.appendChild(element("span", { class: "aiset-tree-search-path", text: decodedPath(result.path) }));
+      if (result.snippet) {
+        var snippet = element("span", { class: "aiset-tree-search-snippet" });
+        if (result.snippet.before) { snippet.appendChild(document.createTextNode(result.snippet.before)); }
+        snippet.appendChild(element("mark", { text: result.snippet.match }));
+        if (result.snippet.after) { snippet.appendChild(document.createTextNode(result.snippet.after)); }
+        item.appendChild(snippet);
+      }
+      item.addEventListener("mousedown", function (event) {
+        if (event && event.preventDefault) { event.preventDefault(); }
+      });
+      item.addEventListener("click", function () { self._activateSearchResult(index); });
+      self.searchResultsNode.appendChild(item);
+    });
+    if (total > this.searchResultsData.length) {
+      this.searchResultsNode.appendChild(element("li", {
+        role: "status",
+        text: "Showing first " + this.searchResultsData.length + " of " + total
+      }));
+    }
+    this.searchResultsNode.hidden = false;
+    this.searchInput.setAttribute("aria-expanded", "true");
+    this._setSearchActive(this.searchActive);
+  };
+
+  TreeEditor.prototype._setSearchActive = function (index) {
+    var items = this.searchResultsNode.children || [];
+    for (var i = 0; i < this.searchResultsData.length && i < items.length; i += 1) {
+      items[i].setAttribute("aria-selected", i === index ? "true" : "false");
+    }
+    if (index >= 0 && items[index]) {
+      this.searchInput.setAttribute("aria-activedescendant", items[index].id || "");
+    } else {
+      this.searchInput.setAttribute("aria-activedescendant", "");
+    }
+    this.searchActive = index;
+  };
+
+  TreeEditor.prototype._closeSearch = function (clearHit) {
+    if (this._searchTimer && global.clearTimeout) {
+      global.clearTimeout(this._searchTimer);
+      this._searchTimer = null;
+    }
+    this.searchResultsNode.hidden = true;
+    this.searchInput.setAttribute("aria-expanded", "false");
+    this.searchInput.setAttribute("aria-activedescendant", "");
+    this.searchActive = -1;
+    if (clearHit && this._searchHitPath) {
+      removeClass(this._rowByPath[this._searchHitPath], "aiset-tree-search-hit");
+      this._searchHitPath = null;
+    }
+  };
+
+  TreeEditor.prototype._activateSearchResult = function (index) {
+    var result = this.searchResultsData[index];
+    if (!result) { return; }
+    this._closeSearch(false);
+    this._revealPath(result.path);
+  };
+
+  TreeEditor.prototype.focusSearch = function () {
+    if (this.searchInput.focus) { this.searchInput.focus(); }
+    if (this.searchInput.select) { this.searchInput.select(); }
+    return this;
+  };
+
+  /* Includes synthetic union children that the snapshot may not carry. */
+  TreeEditor.prototype._findAny = function (path) {
+    var view = this._viewTree();
+    var found = null;
+    var self = this;
+    (function walk(node) {
+      if (!node || found) { return; }
+      if (node.path === path) { found = node; return; }
+      self._searchChildren(node).forEach(walk);
+    })(view && view.node);
+    return found;
+  };
+
+  TreeEditor.prototype.revealPath = function (path) {
+    return this._revealPath(path);
+  };
+
+  TreeEditor.prototype._revealPath = function (path) {
+    path = path === null || path === undefined ? "" : String(path);
+    var target = this._findAny(path);
+    if (!target) {
+      this._setStatus("error", "Search target not found: " + (path || "/") + ".");
+      return false;
+    }
+    /* An absent key cannot be rendered until the host's view asks for it. */
+    if (target.exists === false && !this.showAbsent) { this.setShowAbsent(true); }
+
+    var parts = path.split("/").filter(Boolean);
+    var prefix = "";
+    this.expanded[""] = true;
+    for (var i = 0; i < parts.length - 1; i += 1) {
+      prefix += "/" + parts[i];
+      this.expanded[prefix] = true;
+    }
+    this.expanded[path] = true;
+
+    if (this._searchHitPath) { removeClass(this._rowByPath[this._searchHitPath], "aiset-tree-search-hit"); }
+    this._searchHitPath = path;
+    this._pendingReveal = path;
+    this._render();
+    this._pendingReveal = null;
+
+    var row = this._rowByPath[path];
+    if (!row) {
+      this._setStatus("error", "Could not show " + (path || "/") + ".");
+      return false;
+    }
+    if (row.focus) {
+      try { row.focus({ preventScroll: true }); } catch (error) { row.focus(); }
+    }
+    if (row.scrollIntoView) {
+      var smooth = !(global.matchMedia && global.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      try {
+        row.scrollIntoView({ block: "center", inline: "nearest", behavior: smooth ? "smooth" : "auto" });
+      } catch (error) { row.scrollIntoView(); }
+    }
+    this._scheduleContextUpdate();
+    this._setStatus("info", "Jumped to " + (path || "/") + ".");
+    this._emit("revealed", { path: path });
+    return true;
+  };
+
+  // -- visible path ----------------------------------------------------
+
+  /* The nearest ancestor that actually scrolls, or the page scroller. */
+  TreeEditor.prototype._scrollAncestor = function () {
+    var doc = pageDocument();
+    var node = this.host;
+    while (node && node.nodeType === 1) {
+      var style = global.getComputedStyle ? global.getComputedStyle(node) : null;
+      if (style && /(auto|scroll|overlay)/.test(style.overflowY) &&
+          node.scrollHeight > node.clientHeight) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return (doc && (doc.scrollingElement || doc.documentElement)) || null;
+  };
+
+  TreeEditor.prototype._firstVisibleRow = function (top) {
+    for (var i = 0; i < this._renderedRows.length; i += 1) {
+      var row = this._renderedRows[i].row;
+      if (!row || !row.getBoundingClientRect) { continue; }
+      if (row.getBoundingClientRect().bottom > top) { return row; }
+    }
+    return null;
+  };
+
+  TreeEditor.prototype._updateContext = function () {
+    if (!this.topbar || !this.topbar.getBoundingClientRect) { return; }
+    var scroller = this._scrollAncestor();
+    if (!scroller || !scroller.getBoundingClientRect) { return; }
+    var box = scroller.getBoundingClientRect();
+    var bar = this.topbar.getBoundingClientRect();
+    var top = Math.max(box.top, bar.bottom);
+    var row = null;
+    var doc = pageDocument();
+    if (doc && doc.elementFromPoint) {
+      /* Probe inside the tree's content box, not the pane padding. */
+      var treeBox = this.treeNode.getBoundingClientRect ? this.treeNode.getBoundingClientRect() : box;
+      var hit = doc.elementFromPoint(treeBox.left + 8, top + 1);
+      row = hit && hit.closest ? hit.closest(".aiset-tree-row") : null;
+      if (!row || (this.treeNode.contains && !this.treeNode.contains(row))) {
+        row = this._firstVisibleRow(top);
+      }
+    } else {
+      row = this._firstVisibleRow(top);
+    }
+    var path = row ? (row.dataset && row.dataset.path) || "" : "";
+    if (path === this._contextPath) { return; }
+    this._contextPath = path;
+    this.contextPathNode.textContent = formatContextPath(path);
+    this._emit("contextchange", { path: path });
+  };
+
+  TreeEditor.prototype._scheduleContextUpdate = function () {
+    var self = this;
+    if (typeof global.requestAnimationFrame !== "function") {
+      this._updateContext();
+      return;
+    }
+    if (this._contextFrame) { return; }
+    this._contextFrame = global.requestAnimationFrame(function () {
+      self._contextFrame = 0;
+      self._updateContext();
+    });
+  };
+
+  TreeEditor.prototype.getContextPath = function () {
+    return this._contextPath;
   };
 
   /* Expand or collapse every composite node at once. The document root stays
@@ -332,7 +856,9 @@
         self._expandDefault();
         self.hiddenTemplate = {};
         self.unionShape = {};
+        self._searchHitPath = null;
         self._render();
+        if (self.searchQuery) { self._runSearch(); }
         self._setStatus("ok", "Loaded revision " + String(tree.revision).slice(0, 12) +
           (tree.invalid_on_disk ? " — invalid on disk, showing the last valid state" : ""));
         self._emit("loaded", tree);
@@ -609,6 +1135,12 @@
 
   TreeEditor.prototype.destroy = function () {
     if (this._onResize && global.removeEventListener) { global.removeEventListener("resize", this._onResize); }
+    if (pageDocument() && pageDocument().removeEventListener) {
+      pageDocument().removeEventListener("scroll", this._onScroll, true);
+      pageDocument().removeEventListener("pointerdown", this._onPointerDown, true);
+    }
+    if (this._searchTimer && global.clearTimeout) { global.clearTimeout(this._searchTimer); this._searchTimer = null; }
+    if (this._contextFrame && global.cancelAnimationFrame) { global.cancelAnimationFrame(this._contextFrame); this._contextFrame = 0; }
     this.host.innerHTML = "";
     this.handlers = {};
   };
@@ -616,6 +1148,8 @@
   // -- rendering -------------------------------------------------------
   TreeEditor.prototype._render = function () {
     this._envNames = {};
+    this._rowByPath = {};
+    this._renderedRows = [];
     /* Clearing the tree collapses the scroll container for a moment, and the
      * browser clamps its offset to the top; put the viewport back afterwards. */
     var scroll = this._captureScroll();
@@ -625,12 +1159,14 @@
       this.treeNode.appendChild(element("p", { text: "This path does not exist yet. Apply a change to create it." }));
       this._renderPending();
       this._restoreScroll(scroll);
+      this._scheduleContextUpdate();
       return;
     }
     this.treeNode.appendChild(this._renderNode(view.node, true));
     this._renderPending();
     this._restoreScroll(scroll);
     this._loadEnvPresence();
+    this._scheduleContextUpdate();
   };
 
   /* Scroll offsets of the host, every scrolling ancestor and the page, read
@@ -1148,7 +1684,15 @@
         staged: String(!!node.staged)
       }
     });
-    var row = element("div", { class: "aiset-tree-row" });
+    var row = element("div", {
+      class: "aiset-tree-row", tabindex: "-1",
+      dataset: { path: node.path }
+    });
+    if (this._pendingReveal === node.path) {
+      row.className = String(row.className || "") + " aiset-tree-search-hit";
+    }
+    this._rowByPath[node.path] = row;
+    this._renderedRows.push({ row: row, path: node.path });
     var children = this._visibleChildren(node);
     var composite = children.length;
     var isOpen = this.expanded[node.path];
