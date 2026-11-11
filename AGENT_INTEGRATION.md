@@ -91,7 +91,7 @@ repository rules into a host and do not edit the host's protected files.
    block a submission the server would accept.
 8. After a change: tests, `./test.sh`, `SPEC_service.md` if the interface moved,
    `IMPLEMENTATION_LOG.md`, `memory/context.md`, `memory/history.md`, and
-   `DOCUMENTS.MD` if a document was added.
+   `DOCUMENTS.md` if a document was added.
 
 ## 2. Vocabulary
 

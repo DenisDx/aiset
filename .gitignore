@@ -57,9 +57,6 @@ AGENTS.md
 
 #tmp folder and tmp files
 tmp/
-_*.*
-_*/
-# Package initialisers are code, not temp files. `_*.*` above matches every
-# `__init__.py`, so the negation has to come after it: git applies the last
-# matching pattern. Scoped to `.py` so `__*` junk files stay ignored.
-!__*.py
+
+# Local replacements and local working notes (see AGENTS.md)
+local_*

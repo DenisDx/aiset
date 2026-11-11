@@ -254,17 +254,21 @@ precedence profile exists in the library.
 
 | File | Responsibility |
 |---|---|
-| [DOCUMENTS.MD](DOCUMENTS.MD) | Document map for the whole project. |
+| [DOCUMENTS.md](DOCUMENTS.md) | Document map for the whole project. |
 | [SPEC.md](SPEC.md) | Complete specification (read-only for agents). |
 | [SPEC_service.md](SPEC_service.md) | Normative Python/HTTP/MCP interface. |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Internal file structure, logical components, and data flows. |
 | [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md) | Implementation plan and work log. |
+| [ROADMAP.md](ROADMAP.md) | Deferred work and directions that are not current assignments. |
 | [proposal_demo2.md](proposal_demo2.md) | Proposal for the `demo2` acceptance host and the reusable editor extensions it required. |
-| [SPEC_.md](SPEC_.md) | Proposed corrections to the protected `SPEC.md` (structural operations, tree snapshots, generated editors). |
+| [SPEC_.md](SPEC_.md) | Approved amendments to the protected `SPEC.md` (structural operations, tree snapshots, generated editors). |
 | [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md) | Integration guide for agents: steps, invariants, design rationale and pitfalls. |
 | [TEST.md](TEST.md) | Test protocol and acceptance mapping. |
 | [commands.md](commands.md) | Setup, run, and test commands. |
 | [AGENTS.md](AGENTS.md) | Agent workflow (read-only for agents). |
 | [memory/context.md](memory/context.md), [memory/history.md](memory/history.md) | Agent working context and change log. |
 
-[AGENTS.md](AGENTS.md) is unchanged and read-only. Corrections to protected
-documents are written to a `FILENAME_.md` file as described there.
+[AGENTS.md](AGENTS.md) is read-only. Corrections to protected documents use a
+`<name>_.md` proposal, except `SPEC.md`, whose approved amendments live in
+`SPEC_.md`. Local overrides and working notes use the `local_` prefix and are
+excluded from Git.
