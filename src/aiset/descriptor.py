@@ -435,10 +435,25 @@ def _validate_data(
     document_default = (
         normalize_language_tag(raw_default) if isinstance(raw_default, str) else None
     )
+    _check_template_references(data, templates, issues)
+    unresolved = any(
+        issue.code in ("UNKNOWN_TYPE", "TEMPLATE_CYCLE") for issue in issues
+    )
     root = data.get("root")
     if isinstance(root, dict):
+        # Validation sees the effective node: a template reference inherits the
+        # template's shape, including children and children_options.
+        checked_root = root
+        if not unresolved:
+            try:
+                checked_root = expand_templates(
+                    root, templates, "/root", keep_typedef=True
+                )
+            except DescriptorError:
+                # The unresolved reference is already reported above.
+                pass
         _check_node(
-            root,
+            checked_root,
             "/root",
             issues,
             allow_id=False,
@@ -447,7 +462,6 @@ def _validate_data(
         )
     else:
         issues.append(Issue("DESCRIPTOR_STRUCTURE", "error", "/root", "root must be an object node"))
-    _check_template_references(data, templates, issues)
     strict = mode == "strict"
     if strict:
         for issue in issues:
@@ -674,6 +688,8 @@ def _check_node(
     if not isinstance(node_type, str):
         issues.append(Issue("DESCRIPTOR_STRUCTURE", "error", f"{path}/type", "type is required"))
         return
+    # A template reference is expanded before structural checks; resolving the
+    # name here keeps scalar constraints correct for aliases as well.
     resolved_type = _resolve_type_name(node_type, templates)
 
     if node.get("required") is True and "default" in node:
@@ -1116,15 +1132,29 @@ def _check_template_references(data: Any, templates: dict[str, Any], issues: lis
         walk(root, root_path, ())
 
 
-def expand_templates(data: Any, templates: dict[str, dict], path: str = "") -> Any:
-    """Replace `type: "<template>"` references by the template definition."""
+def expand_templates(
+    data: Any,
+    templates: dict[str, dict],
+    path: str = "",
+    *,
+    keep_typedef: bool = False,
+) -> Any:
+    """Replace `type: "<template>"` references by the template definition.
+
+    `keep_typedef` keeps the node's own `typedef` declaration so validation can
+    still report a template that shadows a primitive type.
+    """
     if isinstance(data, dict) and isinstance(data.get("root"), dict):
         expanded = dict(data)
-        expanded["root"] = expand_templates(data["root"], templates, f"{path}/root")
+        expanded["root"] = expand_templates(
+            data["root"], templates, f"{path}/root", keep_typedef=keep_typedef
+        )
         return expanded
     if not isinstance(data, dict):
         return data
-    node = {key: value for key, value in data.items() if key != "typedef"}
+    node = dict(data) if keep_typedef else {
+        key: value for key, value in data.items() if key != "typedef"
+    }
     node_type = node.get("type")
     if isinstance(node_type, str) and node_type not in PRIMITIVE_TYPES:
         template = templates.get(node_type)
@@ -1135,26 +1165,36 @@ def expand_templates(data: Any, templates: dict[str, dict], path: str = "") -> A
             for key, value in template.items()
             if key != "typedef"
         }
-        node = _merge_template(expand_templates(base, templates, path), node)
+        node = _merge_template(
+            expand_templates(base, templates, path, keep_typedef=keep_typedef), node
+        )
     children = node.get("children")
     if isinstance(children, dict):
         if node.get("type") == "array" and is_item_node(children):
             # An array describes every item with a single node, so a template
             # named there resolves like any other node position (SPEC.md 4.6.10).
-            node["children"] = expand_templates(children, templates, f"{path}/children")
+            node["children"] = expand_templates(
+                children, templates, f"{path}/children", keep_typedef=keep_typedef
+            )
         else:
             node["children"] = {
-                label: expand_templates(child, templates, f"{path}/children/{label}")
+                label: expand_templates(
+                    child, templates, f"{path}/children/{label}", keep_typedef=keep_typedef
+                )
                 for label, child in children.items()
             }
     if isinstance(node.get("additional_children"), dict):
         node["additional_children"] = expand_templates(
-            node["additional_children"], templates, f"{path}/additional_children"
+            node["additional_children"], templates, f"{path}/additional_children",
+            keep_typedef=keep_typedef,
         )
     options = node.get("children_options")
     if isinstance(options, list):
         node["children_options"] = [
-            expand_templates(option, templates, f"{path}/children_options/{index}")
+            expand_templates(
+                option, templates, f"{path}/children_options/{index}",
+                keep_typedef=keep_typedef,
+            )
             for index, option in enumerate(options)
         ]
     return node

@@ -605,6 +605,17 @@ def test_a_template_reference_can_override_composite_keys():
     assert item.maximum == 9
 
 
+def test_a_union_template_supplies_its_own_children_options():
+    source = """
+    { descriptor_version: "1.0", root: { type: "object", children: {
+        level: { typedef: "log_level", type: "union", children_options: [
+            { type: "string" }, { type: "int" } ] },
+        configured: { type: "log_level" } } } }
+    """
+    diagnostic = validate_descriptor(source, mode="strict")
+    assert diagnostic.valid, diagnostic.issues
+
+
 def test_a_misplaced_constraint_is_reported_once():
     source = MINIMAL.replace('a: { type: "string" }', 'a: { type: "any", minimum: 1 }')
     issues = [issue for issue in validate_descriptor(source).issues
