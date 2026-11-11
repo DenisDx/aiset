@@ -319,7 +319,7 @@ including `uncertain` for a result that needs a re-read.
 | GET | `{base}/health` | liveness probe |
 | GET | `{base}/descriptor?document=&view=authorized` | `descriptor` |
 | GET | `{base}/value?document=&path=&view=source` | `get` |
-| GET | `{base}/tree?document=&path=&view=source` | `tree` (section 19) |
+| GET | `{base}/tree?document=&path=&view=source&locale=` | `tree` (section 19) |
 | GET | `{base}/documents` | registered document ids |
 | POST | `{base}/validate` | `validate` |
 | POST | `{base}/value` | `set` |
@@ -633,13 +633,16 @@ the whole document from a single revision instead of issuing one request per
 node (proposal `proposal_demo2.md` section 8.1).
 
 ```python
-service.tree(document_id, path="", *, view="source", principal) -> dict
+service.tree(document_id, path="", *, view="source", principal, locale=None) -> dict
 ```
+
+`locale` selects localized descriptor text for `description` and `title`; an
+absent or unavailable locale falls back to the text's default language.
 
 HTTP:
 
 ```http
-GET {base}/tree?document=main&path=&view=source
+GET {base}/tree?document=main&path=&view=source&locale=ru
 ```
 
 Response:
@@ -669,7 +672,8 @@ Each node carries:
 | `effective` | Resolved value when `view=effective` |
 | `origin` | `file`, `environment` (with `variable`), `default`, or `absent` |
 | `default_applied` | `true` when an effective default is shown |
-| `type`, `apply`, `field` | Descriptor metadata; `field` is the authorized node description |
+| `type`, `apply`, `field` | Descriptor metadata; `field` is the authorized node description, with `description` and `title` resolved for the requested `locale` |
+| `field.description_localized`, `field.title_localized` | Full localized value for a descriptor text written as an object: `{default, text}` with normalized language tags. Omitted for the string form. |
 | `matched_option` | Index into `children_options` of the `union` alternative the stored value validated against; absent when none matches |
 | `children`, `items` | Child nodes. For a `union`, the active alternative's object children or array items; the union keeps `type: union` and its shape chooser. |
 | `access_denied` | `true` for a secret node the principal may not read; its values are omitted, never redacted |

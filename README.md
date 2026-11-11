@@ -8,7 +8,8 @@ and other projects.
 - Resolves `${VAR}` / `${VAR:-default}` templates with one global policy and
   never persists resolved secrets.
 - Describes project fields with a shared descriptor and a JSON Pointer edit
-  contract.
+  contract, including localized `description`/`title` text resolved per locale
+  in tree snapshots.
 - Ignores project-owned descriptor metadata at runtime and reports it through
   development validation.
 - Exposes one service over Python, HTTP, and MCP-shaped envelopes, with

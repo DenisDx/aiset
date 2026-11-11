@@ -376,7 +376,7 @@ revision check.
 | `validate_document(document_id, source, *, principal)` | `ValidateResult` | `settings_validate` | Validate a whole candidate document; writes nothing, no LKG. |
 | `doctor(document_id, *, principal, fix=False, expected_revision=None, expected_descriptor_revision=None)` | `DoctorReport` | `settings_read_effective`; `settings_write` only when `fix` requests a write | Report every issue with a fix class; `fix` repairs the named classes. Writes only when the result is fully valid; the revisions are optional for a report. |
 | `set(document_id, path, value_text, *, expected_revision, expected_descriptor_revision, principal)` | `SetResult` | `settings_write` | One path; probes, hooks, callbacks, application. |
-| `tree(document_id, path="", *, view="source", principal)` | `dict` | same as `get` | Snapshot; see section 12. |
+| `tree(document_id, path="", *, view="source", principal, locale=None)` | `dict` | same as `get` | Snapshot; see section 12. |
 | `apply_operations(document_id, operations, *, expected_revision, expected_descriptor_revision, principal, dry_run=False)` | `OperationsResult` | `settings_validate` / `settings_write` | Atomic batch; see section 13. |
 | `env_status(document_id, names, *, principal)` | `dict[str, bool]` | `settings_read_source` | Presence only; at most 64 valid names; values never returned. |
 | `rollback(document_id, reason, *, principal)` | `SetResult` | `settings_write` | Restore the previous valid file. No revision pair; it is a host recovery action, not a user edit. |
@@ -1019,7 +1019,7 @@ user is about to apply; that preview is not part of the snapshot.)
 | `capabilities` | `edit`, `add`, `remove`, `reorder`, `add_child`, `remove_child`, `key_options`, `key_pattern`; `unsupported` names a recognized-but-unexecuted capability (for example `hooks`) and every action is then false. |
 | `matched_option` | Index into `children_options` of the `union` alternative the stored value validated against; absent when none matches (a substitution is a common case). The editor infers the alternative from `value_text` when this is absent. |
 | `children` / `items` | Child nodes. For a union, these are the **active alternative's** object children or array items; the union keeps `type: "union"` and the shape chooser. Do not re-derive them in a client. |
-| `field` | Descriptor metadata: `type`, `title`, `description`, `default`, constraints, `enum`, `apply`, `env`, `ui`, `nullable`, `required`, `read_only`, `secret`, `children_options`, `children` (an array's item shape) and `additional_children`. |
+| `field` | Descriptor metadata: `type`, `title`, `description`, `default`, constraints, `enum`, `apply`, `env`, `ui`, `nullable`, `required`, `read_only`, `secret`, `children_options`, `children` (an array's item shape) and `additional_children`. `title`/`description` are resolved for the requested `locale`; `title_localized`/`description_localized` carry the full `{default, text}` map for the object form. |
 | `additional_child` | The descriptor of a permitted dynamic key, when the node is an object collection. |
 | `comments` | Source comments that introduce the node, markers removed, decorative rules dropped. |
 | `template` | `name` and inline `default` of a stored `${VAR}` / `${VAR:-default}`. |

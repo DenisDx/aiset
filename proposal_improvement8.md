@@ -1,6 +1,6 @@
 # Python aiset improvements from the aiset-flutter implementation
 
-Status: draft
+Status: completed
 Approval: F1 is confirmed by the project owner (2026-11-11); A1–A21 are proposed.
 
 ## Scope and requirements
@@ -122,74 +122,74 @@ the exported copy. The original file is never modified.
 
 ## Implementation plan
 
-- [ ] **A1** — Return only the replaced node's text from
+- [x] **A1** — Return only the replaced node's text from
   `_array_replacement`; keep the `_replace_node` splice contract. Add a
   full-output assertion and a re-parse assertion.
-- [ ] **A2** — In `apply_move`, keep document-level/opening comments outside the
+- [x] **A2** — In `apply_move`, keep document-level/opening comments outside the
   replaced array span (or do not re-emit them into the body). Add a round-trip
   test for the document-comment case.
-- [ ] **A3** — Validate the new key as one identifier (`fullmatch`, not `match`)
+- [x] **A3** — Validate the new key as one identifier (`fullmatch`, not `match`)
   or a quoted string; reject control characters and line breaks with
   `PathError`. Add a re-parse assertion.
-- [ ] **A4** — Guard every `self.text[self.pos]` access in `parse_key` and the
+- [x] **A4** — Guard every `self.text[self.pos]` access in `parse_key` and the
   parser entry points; truncated input raises a positioned `ParseError`. Add
   tests for `{`, `[`, `{a: 1`, and a truncated string.
-- [ ] **A5** — Validate all `\x` digits as hexadecimal before conversion, as the
+- [x] **A5** — Validate all `\x` digits as hexadecimal before conversion, as the
   `\u` branch already does.
-- [ ] **A6** — In `apply_add`, if the parent is an `ArrayNode`, report "index out
+- [x] **A6** — In `apply_add`, if the parent is an `ArrayNode`, report "index out
   of range" (or "use the `-` append token"); reserve "does not address an
   object" for a genuinely non-container/non-object parent.
-- [ ] **A7** — Add `LICENSE` with the MIT text and the copyright holder confirmed
+- [x] **A7** — Add `LICENSE` with the MIT text and the copyright holder confirmed
   by the project owner. Keep `pyproject.toml` metadata consistent with it.
-- [ ] **A8** — Give `run_demo2.sh` a seed-only mode, or make the test poll for
+- [x] **A8** — Give `run_demo2.sh` a seed-only mode, or make the test poll for
   the seeded files and terminate the launcher. Remove the hardcoded 30-second
   expectation from the success path.
-- [ ] **A9** — In `_create_member`, insert the separator directly after the
+- [x] **A9** — In `_create_member`, insert the separator directly after the
   previous value, preserving the closing brace's leading whitespace. Add a
   full-output and re-parse test for inline objects.
-- [ ] **A10** — Move the `isinstance(data, dict)` guard before
+- [x] **A10** — Move the `isinstance(data, dict)` guard before
   `_check_envelope` in `validate_descriptor`; ensure `compile_descriptor` and
   `_collect_typedefs` raise `InvalidDescriptor` for a non-object descriptor.
-- [ ] **A11** — Remove `enum`, `minimum`, and `maximum` from the property-type
+- [x] **A11** — Remove `enum`, `minimum`, and `maximum` from the property-type
   skip in `_check_node`; keep `type`, `const`, and `default` skipped. Report
   `INVALID_PROPERTY_TYPE` with the property path.
-- [ ] **A12** — Make `DescriptorError` part of the documented hierarchy (subclass
+- [x] **A12** — Make `DescriptorError` part of the documented hierarchy (subclass
   `InvalidDescriptor`/`AisetError` with code `INVALID_DESCRIPTOR`) while keeping
   its `path` and `as_issue`. Check every composition failure path.
-- [ ] **A13** — In `_mount`, apply the free-space check to the final token only;
+- [x] **A13** — In `_mount`, apply the free-space check to the final token only;
   a missing intermediate token reports "does not exist".
-- [ ] **A14** — Define the allowed envelope keys and report each unknown key as
+- [x] **A14** — Define the allowed envelope keys and report each unknown key as
   `UNKNOWN_DESCRIPTOR_PROPERTY`, promoted to an error in strict mode.
-- [ ] **A15** — Mirror the `pattern` compile-check for `key_pattern`, reporting
+- [x] **A15** — Mirror the `pattern` compile-check for `key_pattern`, reporting
   `INVALID_PATTERN` at `<path>/key_pattern`.
-- [ ] **A16** — Pass the collected templates to `_check_default` (or check
+- [x] **A16** — Pass the collected templates to `_check_default` (or check
   defaults after `expand_templates`) so the type and constraints being checked
   are the resolved ones.
-- [ ] **A17** — Before the object/array/union/scalar applicability checks in
+- [x] **A17** — Before the object/array/union/scalar applicability checks in
   `_check_node`, resolve a `type` that names a template to the type defined by
   that template. Keep the existing recursion and cycle checks.
-- [ ] **A18** — In `_merge_template`, when both `children` values are item nodes
+- [x] **A18** — In `_merge_template`, when both `children` values are item nodes
   (`is_item_node`), merge the two node dictionaries instead of passing their
   `type` strings to `_merge_template`.
-- [ ] **A19** — Iterate constraints once, not once per declaring type, or
+- [x] **A19** — Iterate constraints once, not once per declaring type, or
   deduplicate the emitted issues.
-- [ ] **A20** — Validate the composed structure with `_check_*` directly instead
+- [x] **A20** — Validate the composed structure with `_check_*` directly instead
   of `validate_descriptor(_dump(data))`; otherwise map generated positions back
   to the descriptor/fragment source.
-- [ ] **A21** — Build the origin labels as
+- [x] **A21** — Build the origin labels as
   `["typedef source"] * len(typedef_sources) + ["fragment"] * len(fragments)`
   instead of alternating labels by position.
-- [ ] **F1** — In `descriptor.py`, accept both forms and validate R3, R8, R9;
+- [x] **F1** — In `descriptor.py`, accept both forms and validate R3, R8, R9;
   keep the compiled node's `description`/`title` resolved to the
   default-language string. In `tree.py`, carry the full localized value plus the
   active-locale string. Leave `validator.py` unaffected. Add a doctor check for
   localized fields and implement legacy export as a copy-only flattening.
-- [ ] Add cross-cutting regression tests: every mutation operation asserts full
+- [x] Add cross-cutting regression tests: every mutation operation asserts full
   output and re-parses; every descriptor failure asserts the stable code; F1
   covers the shared matrix below.
-- [ ] Update `SPEC_service.md` where the interface or diagnostics change, and
+- [x] Update `SPEC_service.md` where the interface or diagnostics change, and
   `SPEC_.md` only for approved product requirements, following `AGENTS.md`.
-- [ ] Record implementation decisions and verification in
+- [x] Record implementation decisions and verification in
   `IMPLEMENTATION_LOG.md`.
 
 ## Acceptance and verification
@@ -235,3 +235,10 @@ Compatibility window: the object form is not mutually readable until the Python
 implementation lands. Descriptors shared with the current Python release should
 stay in the string form; the compatibility corpus is re-baselined after the
 implementation, not before.
+
+## Results
+
+Implemented on 2026-11-11. `./test.sh` passes with 490 tests (was 463). The
+implementation record, including the decision to enforce R3 during descriptor
+validation instead of adding a separate doctor check, is in
+`IMPLEMENTATION_LOG.md`.

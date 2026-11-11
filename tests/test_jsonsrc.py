@@ -262,3 +262,56 @@ def test_paths_listing():
     paths = document.paths("/nested")
     assert "/nested/list" in paths
     assert "/nested/list/2/deep" in paths
+
+def test_equal_length_array_replacement_round_trips():
+    source = '{\n  list: [\n    // first\n    "a",\n    "b", // second\n    "c",\n  ],\n}\n'
+    after = Document(source).apply_set("/list", '["x","y","z"]')
+    assert after == '{\n  list: [\n    // first\n    "x",\n    "y", // second\n    "z",\n  ],\n}\n'
+    reparsed = Document(after)
+    assert reparsed.stored_value(reparsed.root)["list"] == ["x", "y", "z"]
+
+
+def test_move_keeps_the_document_comment_outside_the_array():
+    after = Document("// doc\n[1, 2, 3]\n").apply_move("/0", "/2")
+    assert after == "// doc\n[2, 3, 1]\n"
+    assert Document(after).stored_value(Document(after).root) == [2, 3, 1]
+
+
+def test_rename_rejects_a_key_with_a_line_break():
+    document = Document("{a:1}")
+    with pytest.raises(PathError):
+        document.apply_rename("/a", "b\n")
+    assert document.text == "{a:1}"
+
+
+def test_truncated_input_is_a_positioned_parse_error():
+    for source in ("{", "{a: 1", "[", '[1,'):
+        with pytest.raises(ParseError) as excinfo:
+            Document(source)
+        assert "line" in str(excinfo.value)
+
+
+def test_malformed_hex_escape_is_a_parse_error():
+    with pytest.raises(ParseError):
+        Document(r'{ a: "\x2" }')
+
+
+def test_create_inline_object_member_places_the_separator_after_the_value():
+    after = Document("{ a: 1 }").apply_set("/b", "2")
+    assert after == "{ a: 1, b: 2 }"
+    assert Document(after).stored_value(Document(after).root) == {"a": 1, "b": 2}
+
+
+def test_create_inline_object_member_reuses_a_trailing_comma():
+    after = Document("{a:1,}").apply_set("/b", "2")
+    assert after == "{a:1, b: 2}"
+    assert Document(after).stored_value(Document(after).root) == {"a": 1, "b": 2}
+
+
+def test_add_to_an_array_reports_the_real_reason():
+    with pytest.raises(PathError) as out_of_range:
+        Document("{a: [1, 2]}").apply_add("/a/5", "9")
+    assert "out of range" in str(out_of_range.value)
+    with pytest.raises(PathError) as existing_index:
+        Document("{a: [1, 2]}").apply_add("/a/0", "9")
+    assert "append token" in str(existing_index.value).lower()

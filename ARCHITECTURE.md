@@ -39,7 +39,8 @@ transports only translate.
   fragment composition, and compilation into a `Node` tree. It accepts
   unknown project metadata at runtime and reports it through development
   validation. `Node` is the contract shared with validation, resolution, tree
-  snapshots, and the doctor.
+  snapshots, and the doctor. `description` and `title` keep the default-language
+  string; the full localized map travels with the node for locale-aware readers.
 - **`validator`** — validates stored values against a compiled `Node`, including
   unions, regex limits, and secret markers. It returns structured `ValueIssue`s,
   never raises for ordinary invalid values.
@@ -48,7 +49,8 @@ transports only translate.
   data. Provenance stays separate from the stored document.
 - **`tree`** — builds one authorized snapshot for generated editors: kinds,
   labels, capabilities, union alternatives, comment-derived descriptions, and
-  secret redaction. It is read-only.
+  secret redaction. It is read-only. An optional `locale` resolves localized
+  `description`/`title` for display while the full map stays in the snapshot.
 - **`merge`**, **`config_obj`** — pure merge of configuration objects and the
   host-facing `Config` object with its mount grammar. `config_obj` keeps origin
   metadata for values assembled from several files.

@@ -500,3 +500,223 @@ def test_node_at_walks_into_a_union_typed_node_directly():
     assert node_at(descriptor, "/steps/0").type == "object"
     assert node_at(descriptor, "/steps/1").type == "int"
     assert node_at(descriptor, "/steps/1/op") is None
+
+
+def test_a_non_object_descriptor_is_reported_not_raised():
+    diagnostic = validate_descriptor("[1, 2]")
+    assert not diagnostic.valid
+    assert diagnostic.issues[0].code == "DESCRIPTOR_SYNTAX"
+    with pytest.raises(InvalidDescriptor):
+        compile_descriptor('"just a string"')
+
+
+def test_property_types_are_checked_for_bounds_and_enum():
+    cases = (
+        'a: { type: "int", minimum: "abc" }',
+        'a: { type: "number", maximum: [1] }',
+        'a: { type: "string", enum: { x: 1 } }',
+    )
+    for node in cases:
+        source = MINIMAL.replace('a: { type: "string" }', node)
+        diagnostic = validate_descriptor(source, mode="strict")
+        assert not diagnostic.valid
+        assert any(issue.code == "INVALID_PROPERTY_TYPE" for issue in diagnostic.issues)
+
+
+def test_composition_errors_carry_a_stable_code():
+    base = '{ descriptor_version: "1.0", root: { type: "object", children: {} } }'
+    with pytest.raises(DescriptorError) as excinfo:
+        compile_descriptor(base, fragments=[DescriptorFragment(source=base, mount="/x")])
+    assert excinfo.value.code == "INVALID_DESCRIPTOR"
+    assert isinstance(excinfo.value, InvalidDescriptor)
+
+
+def test_a_fragment_mounts_below_an_existing_node():
+    base = '{ descriptor_version: "1.0", root: { type: "object", children: { g: { type: "object", children: {} } } } }'
+    fragment = '{ descriptor_version: "1.0", root: { type: "object", children: { z: { type: "int" } } } }'
+    descriptor = compile_descriptor(
+        base,
+        fragments=[DescriptorFragment(source=fragment, mount="/root/children/g/children/z")],
+        strict=True,
+    )
+    assert "z" in descriptor.root.children["g"].children
+
+
+def test_a_fragment_mount_reports_a_missing_intermediate_and_a_collision():
+    base = '{ descriptor_version: "1.0", root: { type: "object", children: { g: { type: "object", children: {} } } } }'
+    fragment = '{ descriptor_version: "1.0", root: { type: "object", children: { z: { type: "int" } } } }'
+    with pytest.raises(DescriptorError) as missing:
+        compile_descriptor(
+            base,
+            fragments=[DescriptorFragment(source=fragment, mount="/root/children/nope/children/z")],
+        )
+    assert "does not exist" in str(missing.value)
+    occupied = '{ descriptor_version: "1.0", root: { type: "object", children: { g: { type: "int" } } } }'
+    with pytest.raises(DescriptorError) as collision:
+        compile_descriptor(
+            occupied,
+            fragments=[DescriptorFragment(source=fragment, mount="/root/children/g")],
+        )
+    assert "collides" in str(collision.value)
+
+
+def test_unknown_envelope_metadata_is_reported():
+    source = '{ descriptor_version: "1.0", language: "en", x_whatever: 1, root: { type: "object", children: {} } }'
+    diagnostic = validate_descriptor(source, mode="strict")
+    assert not diagnostic.valid
+    paths = {issue.path for issue in diagnostic.issues}
+    assert {"/language", "/x_whatever"} <= paths
+    assert all(issue.code == "UNKNOWN_DESCRIPTOR_PROPERTY" for issue in diagnostic.issues)
+
+
+def test_key_pattern_is_compile_checked():
+    source = MINIMAL.replace(
+        'a: { type: "string" }',
+        'a: { type: "object", key_pattern: "(", additional_children: { type: "int" } }',
+    )
+    diagnostic = validate_descriptor(source, mode="strict")
+    assert any(
+        issue.code == "INVALID_PATTERN" and issue.path == "/root/children/a/key_pattern"
+        for issue in diagnostic.issues
+    )
+
+
+def test_a_default_is_checked_after_template_expansion():
+    source = """
+    { descriptor_version: "1.0", root: { type: "object", children: {
+        port: { typedef: "sp", type: "int", minimum: 1 },
+        bad:  { type: "sp", default: "abc" },
+        worse: { type: "int", default: "abc" } } } }
+    """
+    diagnostic = validate_descriptor(source, mode="strict")
+    paths = {issue.path for issue in diagnostic.issues if issue.code == "INVALID_DEFAULT"}
+    assert paths == {"/root/children/bad/default", "/root/children/worse/default"}
+
+
+def test_a_template_reference_can_override_composite_keys():
+    source = """
+    { descriptor_version: "1.0", root: { type: "object", children: {
+        t: { typedef: "ints", type: "array", children: { type: "int", minimum: 1 } },
+        u: { type: "ints", children: { type: "int", maximum: 9 } } } } }
+    """
+    descriptor = compile_descriptor(source, strict=True)
+    item = descriptor.root.children["u"].item_node
+    assert item.minimum == 1
+    assert item.maximum == 9
+
+
+def test_a_misplaced_constraint_is_reported_once():
+    source = MINIMAL.replace('a: { type: "string" }', 'a: { type: "any", minimum: 1 }')
+    issues = [issue for issue in validate_descriptor(source).issues
+              if issue.path == "/root/children/a/minimum"]
+    assert len(issues) == 1
+
+
+def test_post_composition_issues_have_no_generated_position():
+    base = '{ descriptor_version: "1.0", root: { type: "object", children: { g: { type: "object", children: {} } } } }'
+    fragment = '{ descriptor_version: "1.0", root: { type: "object", children: { z: { type: "int", minimum: "bad" } } } }'
+    with pytest.raises(InvalidDescriptor) as excinfo:
+        compile_descriptor(
+            base,
+            fragments=[DescriptorFragment(source=fragment, mount="/root/children/g/children/z")],
+            strict=True,
+        )
+    assert excinfo.value.issues
+    for issue in excinfo.value.issues:
+        assert "line" not in issue
+        assert "column" not in issue
+
+
+def test_typedef_source_origins_are_labelled_by_kind(monkeypatch):
+    import aiset.descriptor as descriptor_module
+
+    real = descriptor_module.parse_descriptor
+    seen: list[str] = []
+
+    def recording(source, *, origin="<descriptor>"):
+        seen.append(origin)
+        return real(source, origin=origin)
+
+    monkeypatch.setattr(descriptor_module, "parse_descriptor", recording)
+    base = '{ descriptor_version: "1.0", root: { type: "object", children: {} } }'
+    extra = '{ descriptor_version: "1.0", root: { type: "object", children: { t: { typedef: "tpl", type: "int" } } } }'
+    compile_descriptor(base, typedef_sources=[extra, extra.replace("tpl", "tpl2")])
+    assert seen.count("<typedef source>") == 2
+    assert "<fragment>" not in seen
+
+
+def test_localized_text_accepts_both_forms_and_keeps_the_string_default():
+    source = """
+    { descriptor_version: "1.0", default_language: "en", root: { type: "object", children: {
+        plain: { type: "int", description: "Plain text" },
+        retries: { type: "int",
+            description: { text: { en: "Retries", ru: "Повторы" } },
+            title: { default: "ru", text: { en: "Retry count", ru: "Число повторов" } } } } } }
+    """
+    descriptor = compile_descriptor(source, strict=True)
+    plain = descriptor.root.children["plain"]
+    assert plain.description == "Plain text"
+    assert plain.description_localized is None
+    retries = descriptor.root.children["retries"]
+    assert retries.description == "Retries"
+    assert retries.description_localized == {
+        "default": "en",
+        "text": {"en": "Retries", "ru": "Повторы"},
+    }
+    assert retries.title == "Число повторов"
+    assert retries.title_localized["default"] == "ru"
+    assert retries.describe(locale="ru")["description"] == "Повторы"
+    assert retries.describe(locale="ru")["title"] == "Число повторов"
+
+
+def test_localized_text_export_flattens_to_the_default_string():
+    source = """
+    { descriptor_version: "1.0", default_language: "en", root: { type: "object", children: {
+        retries: { type: "int", description: { text: { en: "Retries", ru: "Повторы" } } } } } }
+    """
+    descriptor = compile_descriptor(source, strict=True)
+    exported = descriptor.to_authorized_dict()
+    field = exported["root"]["children"]["retries"]
+    assert field["description"] == "Retries"
+    assert "description_localized" not in field
+
+
+def test_localized_text_requires_a_resolvable_default():
+    cases = (
+        ('{ descriptor_version: "1.0", root: { type: "object", children: { a: { type: "int", description: { text: { en: "Hi" } } } } } }',
+         "INVALID_LOCALIZED_TEXT"),
+        ('{ descriptor_version: "1.0", root: { type: "object", children: { a: { type: "int", description: { default: "de", text: { en: "Hi" } } } } } }',
+         "INVALID_LOCALIZED_TEXT"),
+        ('{ descriptor_version: "1.0", default_language: "ru", root: { type: "object", children: { a: { type: "int", description: { text: { en: "Hi" } } } } } }',
+         "INVALID_LOCALIZED_TEXT"),
+    )
+    for source, code in cases:
+        diagnostic = validate_descriptor(source, mode="strict")
+        assert not diagnostic.valid
+        assert any(issue.code == code for issue in diagnostic.issues)
+
+
+def test_localized_text_rejects_malformed_tags_unknown_keys_and_bad_entries():
+    cases = (
+        ('{ descriptor_version: "1.0", root: { type: "object", children: { a: { type: "int", description: { text: { "en_US": "Hi" } } } } } }',
+         "INVALID_LANGUAGE_TAG"),
+        ('{ descriptor_version: "1.0", default_language: "en", root: { type: "object", children: { a: { type: "int", description: { text: { en: "Hi" }, defualt: "en" } } } } }',
+         "INVALID_LOCALIZED_TEXT"),
+        ('{ descriptor_version: "1.0", root: { type: "object", children: { a: { type: "int", description: { text: { en: 1 } } } } } }',
+         "INVALID_LOCALIZED_TEXT"),
+    )
+    for source, code in cases:
+        diagnostic = validate_descriptor(source, mode="strict")
+        assert not diagnostic.valid
+        assert any(issue.code == code for issue in diagnostic.issues)
+
+
+def test_localized_tags_are_normalized():
+    source = """
+    { descriptor_version: "1.0", default_language: "EN", root: { type: "object", children: {
+        a: { type: "int", description: { text: { "RU": "Привет", "zh-hans": "你好" }, default: "RU" } } } } }
+    """
+    descriptor = compile_descriptor(source, strict=True)
+    field = descriptor.root.children["a"]
+    assert set(field.description_localized["text"]) == {"ru", "zh-Hans"}
+    assert field.description == "Привет"

@@ -712,7 +712,13 @@ class Service:
         return sorted(self.documents)
 
     def tree(
-        self, document_id: str, path: str = "", *, view: str = "source", principal: Principal
+        self,
+        document_id: str,
+        path: str = "",
+        *,
+        view: str = "source",
+        principal: Principal,
+        locale: str | None = None,
     ) -> dict[str, Any]:
         """One consistent, authorized snapshot for a generated editor."""
         from .tree import build_tree
@@ -731,6 +737,7 @@ class Service:
             view=view,
             can_read_secret=principal.has("settings_read_secret"),
             limits=self.settings.limits,
+            locale=locale,
         )
 
     def env_status(self, document_id: str, names: Sequence[str], *, principal: Principal) -> dict[str, bool]:

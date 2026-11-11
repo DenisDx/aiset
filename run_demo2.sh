@@ -8,6 +8,7 @@
 #
 #   ./run_demo2.sh
 #   ./run_demo2.sh --demo2.server.port:8384
+#   ./run_demo2.sh --seed-only
 
 set -eu
 
@@ -23,6 +24,11 @@ fi
 if [ ! -e "$STATE/.env" ]; then
   cp "$STATE/.env.example" "$STATE/.env"
   echo "seeded $STATE/.env"
+fi
+
+# A seed-only run is used by tests and setup; it must not start a server.
+if [ "${1:-}" = "--seed-only" ]; then
+  exit 0
 fi
 
 # 2. The local interpreter must exist and be executable.

@@ -351,14 +351,15 @@ def test_launcher_seeds_missing_files_without_overwrite(workspace):
     (workspace / "config.json5.example").write_text(
         (DEMO2 / "config.json5.example").read_text(encoding="utf-8"), encoding="utf-8"
     )
-    result = run_launcher(workspace, ["--demo2.server.port:1"])
-    assert "seeded" in result.stdout or result.returncode != 0
+    result = run_launcher(workspace, ["--seed-only"])
+    assert result.returncode == 0
+    assert "seeded" in result.stdout
     assert (workspace / "config.json5").exists()
     assert (workspace / ".env").exists()
     # A second run must not overwrite the local files.
     (workspace / "config.json5").write_text("{ edited: true }\n", encoding="utf-8")
     (workspace / ".env").write_text("DEMO2_PORT=9999\n", encoding="utf-8")
-    run_launcher(workspace, ["--demo2.server.port:1"])
+    run_launcher(workspace, ["--seed-only"])
     assert (workspace / "config.json5").read_text(encoding="utf-8") == "{ edited: true }\n"
     assert (workspace / ".env").read_text(encoding="utf-8") == "DEMO2_PORT=9999\n"
 

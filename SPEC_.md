@@ -1,10 +1,9 @@
-# Corrections to the frozen aiset specification
+# Amendments and corrections to the frozen aiset specification
 
 Target document: `SPEC.md` (agent-write-protected, per `AGENTS.md`).
-Reason: `proposal_demo2.md` implements milestone M4 capabilities that the frozen
-specification currently places out of scope for v1. The implementation follows
-the proposal; this file records the exact corrections so `SPEC.md` can be
-updated by its owner.
+Reason: approved changes that the frozen specification does not yet contain.
+This file records each amendment or correction, with its approval and
+implementation state, so `SPEC.md` can be updated by its owner.
 
 ---
 
@@ -461,3 +460,13 @@ An operation authorizes and validates every affected path, preserves the source
 bytes and owned comments of everything it does not touch, and rejects unsafe
 comment ownership with `COMMENT_PRESERVATION_CONFLICT`.
 ```
+
+---
+
+## Localized descriptor text
+
+Affected: SPEC.md 4.6.1 "Authoring and envelope" and 4.6.2 "Node grammar"
+Approval: confirmed by the project owner on 2026-11-11
+State: implemented
+Change: `description` and `title` accept either a string (unchanged, the compatible default) or an object `{ default?, text: { <language-tag>: <non-empty string> } }`. The object requires a non-empty `text` map; `default` names the fallback language and, when absent, the descriptor envelope's new optional `default_language` property supplies it. An object that cannot resolve to a string is a descriptor error. Tags are BCP-47 and compared case-insensitively after normalization; malformed tags and unknown keys inside the object are descriptor errors. A locale-unaware consumer, including the authorized descriptor export, receives the default-language string; the source file is never modified. The tree snapshot accepts an optional `locale` and carries both the resolved text and the full localized map. The string form remains unchanged and is still looked up as a translation key by a locale-aware host.
+Reference: `proposal_improvement8.md` F1; verification in `IMPLEMENTATION_LOG.md`.

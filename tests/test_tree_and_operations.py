@@ -764,3 +764,35 @@ def test_a_batch_can_create_a_container_and_fill_it(tmp_path):
     assert "/tool" in result.changed_paths and "/tool/worker" in result.changed_paths
     text = (tmp_path / "union.json5").read_text(encoding="utf-8")
     assert 'worker: "web_fetch"' in text
+
+
+def test_tree_resolves_localized_text_for_a_locale(tmp_path, resolver):
+    target = tmp_path / "i18n.json5"
+    target.write_text("{ retries: 3 }\n", encoding="utf-8")
+    descriptor = """
+    { descriptor_version: "1.0", default_language: "en", root: { type: "object", children: {
+        retries: { type: "int",
+            description: { text: { en: "Retries", ru: "Повторы" } },
+            title: { default: "ru", text: { en: "Retry count", ru: "Число повторов" } } } } } }
+    """
+    svc = Service()
+    svc.register("i18n", target, descriptor, resolver=resolver)
+    principal = Principal.demo()
+
+    def field(locale=None):
+        tree = svc.tree("i18n", principal=principal, locale=locale)
+        pending = [tree["node"]]
+        while pending:
+            node = pending.pop()
+            if node["path"] == "/retries":
+                return node["field"]
+            pending.extend(node.get("children", []))
+        raise AssertionError("retries not found")
+
+    default = field()
+    assert default["description"] == "Retries"
+    assert default["description_localized"]["text"]["ru"] == "Повторы"
+    localized = field("ru")
+    assert localized["description"] == "Повторы"
+    assert localized["title"] == "Число повторов"
+    assert field("de")["description"] == "Retries"

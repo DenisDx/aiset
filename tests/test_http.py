@@ -373,3 +373,28 @@ def test_document_doctor_rejects_a_bad_fix_argument(client):
         "/api/settings/document/doctor", {"document": "demo", "fix": 5}
     )
     assert status == 400 and payload["error"]["code"] == "BAD_REQUEST"
+
+
+def test_tree_route_passes_the_locale_to_localized_text(tmp_path):
+    from aiset.service import Service
+
+    target = tmp_path / "i18n.json5"
+    target.write_text("{ retries: 3 }\n", encoding="utf-8")
+    descriptor = """
+    { descriptor_version: "1.0", default_language: "en", root: { type: "object", children: {
+        retries: { type: "int", description: { text: { en: "Retries", ru: "Повторы" } } } } } }
+    """
+    svc = Service()
+    svc.register("i18n", target, descriptor)
+    status, payload = Client(create_app(svc)).get(
+        "/api/settings/tree", "document=i18n&locale=ru"
+    )
+    assert status == 200
+    pending = [payload["node"]]
+    while pending:
+        node = pending.pop()
+        if node["path"] == "/retries":
+            assert node["field"]["description"] == "Повторы"
+            return
+        pending.extend(node.get("children", []))
+    raise AssertionError("retries not found")

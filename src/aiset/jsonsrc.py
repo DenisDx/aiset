@@ -320,6 +320,8 @@ class _Parser:
         seen: dict[str, int] = {}
         while True:
             pending = self.skip_trivia()
+            if self.peek() == "":
+                raise self.fail("Unexpected end of input")
             if self.peek() == "}":
                 node.block_end = pending
                 self.pos += 1
@@ -355,6 +357,8 @@ class _Parser:
         node.opening_comments = self.take_same_line_comments()
         while True:
             pending = self.skip_trivia()
+            if self.peek() == "":
+                raise self.fail("Unexpected end of input")
             if self.peek() == "]":
                 node.block_end = pending
                 self.pos += 1
@@ -371,7 +375,7 @@ class _Parser:
 
     def parse_key(self) -> tuple[str, int, int, str]:
         char = self.peek()
-        if char in "'\"":
+        if char in ("'", '"'):
             node = self.parse_string()
             assert isinstance(node, StringNode)
             return node.value, node.start, node.end, node.raw
@@ -424,7 +428,9 @@ class _Parser:
             return chr(int(hex_digits, 16))
         if char == "x":
             hex_digits = self.text[self.pos : self.pos + 2]
-            if len(hex_digits) != 2:
+            if len(hex_digits) != 2 or any(
+                digit not in "0123456789abcdefABCDEF" for digit in hex_digits
+            ):
                 raise self.fail("Malformed \\x escape")
             self.pos += 2
             return chr(int(hex_digits, 16))
@@ -644,6 +650,16 @@ class Document:
                 raise PathError("The append token '-' requires an array")
             return self._append_item(container, fragment)
         parent = self.find("/".join(pointer.split("/")[:-1]))
+        if isinstance(parent, ArrayNode):
+            token = tokens[-1]
+            if token.isdigit() and int(token) > len(parent.items):
+                raise PathError(
+                    f"Array index {token} is out of range in {pointer!r} "
+                    f"(length {len(parent.items)})"
+                )
+            raise PathError(
+                f"Path {pointer!r} addresses an array; use the '-' append token to add an item"
+            )
         if not isinstance(parent, ObjectNode):
             raise PathError(f"Path {pointer!r} does not address an object")
         return self._create_member(parent, tokens[-1], fragment)
@@ -723,7 +739,7 @@ class Document:
             return self.text
         if parent.member(new_key) is not None:
             raise PathError(f"Duplicate object key {new_key!r}")
-        key_text = new_key if IDENTIFIER_RE.match(new_key) else quote_key(new_key)
+        key_text = key_source(new_key)
         return self._splice(member.key_start, member.key_end, key_text)
 
     def _array_index(
@@ -779,13 +795,15 @@ class Document:
                 _with_separator(block, keep_comma and index == last_index)
                 for index, block in enumerate(blocks)
             ]
-            opening = (" ".join(c.text for c in parent.opening_comments) + " ") if parent.opening_comments else ""
+            opening_comments = [c for c in parent.opening_comments if c.start > parent.start]
+            opening = (" ".join(c.text for c in opening_comments) + " ") if opening_comments else ""
             tail = (" " + " ".join(c.text for c in parent.block_end)) if parent.block_end else ""
             return "[" + opening + ", ".join(parts) + tail + "]"
         entry_indent = _inner_indent(self, parent, base_indent, unit)
         lines = ["["]
-        if parent.opening_comments:
-            lines[-1] += " " + " ".join(c.text for c in parent.opening_comments)
+        opening_comments = [c for c in parent.opening_comments if c.start > parent.start]
+        if opening_comments:
+            lines[-1] += " " + " ".join(c.text for c in opening_comments)
         for index, block in enumerate(blocks):
             last = index == len(blocks) - 1
             rendered = _with_separator(block, keep_comma or not last)
@@ -916,16 +934,16 @@ class Document:
                     ),
                 )
             )
-        result = self.text
+        result = self.text[old.start : old.end]
         for start, end, replacement in sorted(edits, key=lambda edit: edit[0], reverse=True):
-            result = result[:start] + replacement + result[end:]
+            result = result[: start - old.start] + replacement + result[end - old.start :]
         return result
 
     def _create_member(self, parent: ObjectNode, label: str, fragment: "Document") -> str:
         if label in {member.label for member in parent.members}:
             raise PathError(f"Duplicate object key {label!r}")
         submitted = fragment.root
-        key_text = label if IDENTIFIER_RE.match(label) else quote_key(label)
+        key_text = key_source(label)
         base_indent = self.base_indent_at(parent.start)
         multiline = "\n" in self.source_of(parent)
         unit = self._indent_unit(parent)
@@ -945,7 +963,11 @@ class Document:
         entry = f"{key_text}: {value_text}"
         if not parent.members:
             return self._splice(parent.start + 1, parent.end - 1, entry)
-        at = _before_close(parent)
+        last = parent.members[-1]
+        if last.comma_pos is not None:
+            at = max(last.comma_pos + 1, _member_end(last))
+            return self._splice(at, at, f" {entry}")
+        at = _member_end(last)
         return self._splice(at, at, f", {entry}")
 
     def _splice(self, start: int, end: int, replacement: str) -> str:
@@ -976,6 +998,14 @@ def parent_path(pointer: str) -> str:
 
 def quote_key(label: str) -> str:
     return '"' + label.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def key_source(label: str) -> str:
+    """Source text for one object key, rejecting characters a key cannot carry."""
+    for char in label:
+        if char in LINE_BREAKS or ord(char) < 0x20 or ord(char) == 0x7F:
+            raise PathError("An object key must not contain control characters or line breaks")
+    return label if IDENTIFIER_RE.fullmatch(label) else quote_key(label)
 
 
 def parse_fragment(value_text: str) -> Document:

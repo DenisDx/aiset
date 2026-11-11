@@ -212,6 +212,7 @@ def _handle_api(
             _one(query, "path") or "",
             view=_one(query, "view") or "source",
             principal=principal,
+            locale=_one(query, "locale"),
         )
         return _json(start_response, 200, {"ok": True, **result})
 

@@ -175,7 +175,7 @@ class UnsupportedCapability(AisetError):
     status = 501
 
 
-class DescriptorError(ValueError):
+class DescriptorError(InvalidDescriptor, ValueError):
     """Malformed descriptor definition detected while loading/composing."""
 
     def __init__(self, message: str, *, path: str = "") -> None:

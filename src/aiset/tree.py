@@ -63,13 +63,14 @@ def build_tree(
     view: str = "source",
     can_read_secret: bool = True,
     limits: Limits | None = None,
+    locale: str | None = None,
 ) -> dict[str, Any]:
     """Build the tree payload for one revision of one document."""
     limits = limits or Limits()
     registration: DocumentRegistration = state.registration
     root = state.document.find(path)
     node = _node_at(registration, path)
-    builder = _TreeBuilder(state, view, can_read_secret, limits)
+    builder = _TreeBuilder(state, view, can_read_secret, limits, locale)
     payload: dict[str, Any] = {
         "document": registration.document_id,
         "path": path,
@@ -89,12 +90,18 @@ def build_tree(
 
 class _TreeBuilder:
     def __init__(
-        self, state: DocumentState, view: str, can_read_secret: bool, limits: Limits
+        self,
+        state: DocumentState,
+        view: str,
+        can_read_secret: bool,
+        limits: Limits,
+        locale: str | None = None,
     ) -> None:
         self.state = state
         self.view = view
         self.can_read_secret = can_read_secret
         self.limits = limits
+        self.locale = locale
 
     # -- public ----------------------------------------------------------
     def build(
@@ -183,7 +190,7 @@ class _TreeBuilder:
         if default_applied:
             entry["default_applied"] = True
         if node is not None:
-            entry["field"] = node.describe()
+            entry["field"] = node.describe(locale=self.locale, include_localized=True)
             entry["apply"] = node.apply
             entry["type"] = node.type
             if matched_option is not None:
@@ -197,7 +204,9 @@ class _TreeBuilder:
             # variable name and the inline default separately.
             entry["template"] = {"name": cst.name, "default": cst.default}
         if node is not None and node.additional_children is not None:
-            entry["additional_child"] = node.additional_children.describe()
+            entry["additional_child"] = node.additional_children.describe(
+                locale=self.locale, include_localized=True
+            )
         entry["children"] = self._children(
             path, node, cst, editable=editable, active=active_option
         )

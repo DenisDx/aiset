@@ -32,7 +32,72 @@ HELPER_ACTIONS = ("create", "edit")
 PRESENTATIONS = ("modal", "wizard")
 SCOPES = ("node", "subtree")
 
-ENVELOPE_KEYS = ("descriptor_version", "project", "config_version", "root")
+ENVELOPE_KEYS = ("descriptor_version", "project", "config_version", "default_language", "root")
+LOCALIZED_KEYS = ("text", "default")
+_LANGUAGE_RE = re.compile(
+    r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|x(?:-[A-Za-z0-9]{1,8})+)$"
+)
+
+
+def normalize_language_tag(tag: Any) -> str | None:
+    """Return a normalized BCP-47-like tag, or None when it is malformed."""
+    if not isinstance(tag, str) or not _LANGUAGE_RE.fullmatch(tag):
+        return None
+    parts = tag.split("-")
+    normalized: list[str] = []
+    for index, part in enumerate(parts):
+        if index == 0:
+            normalized.append(part.lower())
+        elif len(part) == 4 and part.isalpha():
+            normalized.append(part[:1].upper() + part[1:].lower())
+        elif len(part) == 2 and part.isalpha():
+            normalized.append(part.upper())
+        else:
+            normalized.append(part.lower())
+    return "-".join(normalized)
+
+
+def _localized_text(
+    value: Any, document_default: str | None
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve a description/title form to (default string, normalized map)."""
+    if isinstance(value, str):
+        return value, None
+    if not isinstance(value, dict):
+        return None, None
+    text = value.get("text")
+    if not isinstance(text, dict):
+        return None, None
+    normalized: dict[str, str] = {}
+    for tag, string in text.items():
+        normalized_tag = normalize_language_tag(tag)
+        if normalized_tag is not None and isinstance(string, str):
+            normalized[normalized_tag] = string
+    default = value.get("default")
+    default_tag = normalize_language_tag(default) if isinstance(default, str) else None
+    if default_tag is None or default_tag not in normalized:
+        default_tag = document_default if document_default in normalized else None
+    if default_tag is None and normalized:
+        default_tag = next(iter(normalized))
+    if default_tag is None:
+        return None, None
+    return normalized[default_tag], {"default": default_tag, "text": normalized}
+
+
+def _resolve_localized(
+    localized: dict[str, Any] | None, default_text: str | None, locale: str | None
+) -> str | None:
+    """Resolve a localized value for one locale, falling back to its default."""
+    if not localized:
+        return default_text
+    text = localized.get("text") or {}
+    if locale:
+        normalized = normalize_language_tag(locale)
+        if normalized in text:
+            return text[normalized]
+    return default_text
+
+
 ENV_KEYS = ("allowed", "convert")
 UI_KEYS = ("label", "group", "order", "help", "widget", "rows", "placeholder")
 HELPER_KEYS = ("tag", "actions", "presentation", "settings")
@@ -75,8 +140,8 @@ NODE_KEYS = (
 # Property name -> accepted Python types (SPEC.md 4.6.2).
 PROPERTY_TYPES: dict[str, tuple[type, ...]] = {
     "type": (str,),
-    "description": (str,),
-    "title": (str,),
+    "description": (str, dict),
+    "title": (str, dict),
     "required": (bool,),
     "nullable": (bool,),
     "enum": (list,),
@@ -187,7 +252,9 @@ class Node:
         "label",
         "field_name",
         "description",
+        "description_localized",
         "title",
+        "title_localized",
         "required",
         "nullable",
         "default",
@@ -231,12 +298,14 @@ class Node:
     def is_scalar(self) -> bool:
         return self.type not in ("object", "array", "union")
 
-    def describe(self) -> dict[str, Any]:
-        """Field metadata used by the browser (authorized view)."""
+    def describe(
+        self, *, locale: str | None = None, include_localized: bool = False
+    ) -> dict[str, Any]:
+        """Field metadata; an optional locale selects localized text."""
         out: dict[str, Any] = {"type": self.type}
         for key, value in (
-            ("description", self.description),
-            ("title", self.title),
+            ("description", _resolve_localized(self.description_localized, self.description, locale)),
+            ("title", _resolve_localized(self.title_localized, self.title, locale)),
             ("required", self.required),
             ("nullable", self.nullable),
             ("default", self.default),
@@ -256,21 +325,35 @@ class Node:
         ):
             if value is not None:
                 out[key] = value
+        if include_localized and self.description_localized is not None:
+            out["description_localized"] = dict(self.description_localized)
+        if include_localized and self.title_localized is not None:
+            out["title_localized"] = dict(self.title_localized)
         if self.env_allowed:
             out["env"] = {"allowed": True}
             if self.env_convert:
                 out["env"]["convert"] = self.env_convert
         if self.children:
-            out["children"] = {name: node.describe() for name, node in self.children.items()}
+            out["children"] = {
+                name: node.describe(locale=locale, include_localized=include_localized)
+                for name, node in self.children.items()
+            }
         if self.item_node is not None and self.type == "array":
             # An array describes every item with a single node. A client needs
             # that shape to offer the right control for a new entry, and the
             # descriptor itself is written exactly this way.
-            out["children"] = self.item_node.describe()
+            out["children"] = self.item_node.describe(
+                locale=locale, include_localized=include_localized
+            )
         if self.option_nodes:
-            out["children_options"] = [option.describe() for option in self.option_nodes]
+            out["children_options"] = [
+                option.describe(locale=locale, include_localized=include_localized)
+                for option in self.option_nodes
+            ]
         if self.additional_children is not None:
-            out["additional_children"] = self.additional_children.describe()
+            out["additional_children"] = self.additional_children.describe(
+                locale=locale, include_localized=include_localized
+            )
         if self.key_pattern:
             out["key_pattern"] = self.key_pattern
         if self.key_enum:
@@ -299,12 +382,15 @@ class CompiledDescriptor:
     revision: str
     project: str | None = None
     config_version: str | None = None
+    default_language: str | None = None
 
     def to_authorized_dict(self) -> dict[str, Any]:
+        """Authorized export; localized text is flattened for legacy readers."""
         return {
             "descriptor_version": DESCRIPTOR_VERSION,
             "project": self.project,
             "config_version": self.config_version,
+            "default_language": self.default_language,
             "revision": self.revision,
             "root": self.root.describe(),
         }
@@ -323,29 +409,52 @@ def validate_descriptor(
     `known_templates` supplies names from typedef sources or fragments so a
     reference to a template defined elsewhere is not reported as unknown.
     """
-    issues: list[Issue] = []
     try:
         data = parse_descriptor(source)
     except Exception as exc:  # syntax errors are reported, not raised
         return Diagnostic(valid=False, issues=[Issue("DESCRIPTOR_SYNTAX", "error", "", str(exc))])
-    _check_envelope(data, issues)
+    return _validate_data(data, mode=mode, known_templates=known_templates, source=source)
+
+
+def _validate_data(
+    data: Any,
+    *,
+    mode: str,
+    known_templates: dict[str, Any] | None = None,
+    source: str | None = None,
+) -> Diagnostic:
+    """Validate an already-parsed descriptor; positions are optional."""
+    issues: list[Issue] = []
     if not isinstance(data, dict):
         issues.append(Issue("DESCRIPTOR_SYNTAX", "error", "", "Descriptor root must be an object"))
         return Diagnostic(valid=False, issues=issues)
-    root = data.get("root")
-    if isinstance(root, dict):
-        _check_node(root, "/root", issues, allow_id=False)
-    else:
-        issues.append(Issue("DESCRIPTOR_STRUCTURE", "error", "/root", "root must be an object node"))
+    _check_envelope(data, issues)
     templates = _collect_typedefs(data, issues)
     templates.update(known_templates or {})
+    raw_default = data.get("default_language")
+    document_default = (
+        normalize_language_tag(raw_default) if isinstance(raw_default, str) else None
+    )
+    root = data.get("root")
+    if isinstance(root, dict):
+        _check_node(
+            root,
+            "/root",
+            issues,
+            allow_id=False,
+            templates=templates,
+            document_default_language=document_default,
+        )
+    else:
+        issues.append(Issue("DESCRIPTOR_STRUCTURE", "error", "/root", "root must be an object node"))
     _check_template_references(data, templates, issues)
     strict = mode == "strict"
     if strict:
         for issue in issues:
             if issue.code == UNKNOWN_PROPERTY:
                 issue.severity = "error"
-    _locate_issues(source, issues)
+    if source is not None:
+        _locate_issues(source, issues)
     valid = not any(issue.severity == "error" for issue in issues)
     return Diagnostic(valid=valid, issues=issues)
 
@@ -402,8 +511,103 @@ def _check_envelope(data: dict[str, Any], issues: list[Issue]) -> None:
     for key in ("project", "config_version"):
         if key in data and not isinstance(data[key], str):
             issues.append(Issue("DESCRIPTOR_STRUCTURE", "error", "/" + key, f"{key} must be a string"))
+    if "default_language" in data:
+        if not isinstance(data["default_language"], str):
+            issues.append(
+                Issue("DESCRIPTOR_STRUCTURE", "error", "/default_language",
+                      "default_language must be a string")
+            )
+        elif normalize_language_tag(data["default_language"]) is None:
+            issues.append(
+                Issue("INVALID_LANGUAGE_TAG", "error", "/default_language",
+                      "default_language is not a well-formed language tag")
+            )
     if "root" not in data:
         issues.append(Issue("DESCRIPTOR_STRUCTURE", "error", "/root", "root is required"))
+    for key in data:
+        if key not in ENVELOPE_KEYS:
+            issues.append(
+                Issue(
+                    UNKNOWN_PROPERTY,
+                    "warning",
+                    "/" + key,
+                    "Property is not interpreted by the shared settings library",
+                )
+            )
+
+
+def _check_localized_text(
+    node: dict[str, Any],
+    key: str,
+    path: str,
+    issues: list[Issue],
+    document_default: str | None,
+) -> None:
+    """Validate the object form of `description`/`title` (F1 rules R3, R8, R9)."""
+    if key not in node:
+        return
+    value = node[key]
+    if isinstance(value, str):
+        return
+    if not isinstance(value, dict):
+        return  # the property-type check already reported it
+    field_path = f"{path}/{key}"
+    for unknown in value:
+        if unknown not in LOCALIZED_KEYS:
+            issues.append(
+                Issue("INVALID_LOCALIZED_TEXT", "error", f"{field_path}/{unknown}",
+                      "Unknown localized text property")
+            )
+    text = value.get("text")
+    if not isinstance(text, dict) or not text:
+        issues.append(
+            Issue("INVALID_LOCALIZED_TEXT", "error", f"{field_path}/text",
+                  "localized text must be a nonempty object")
+        )
+        return
+    normalized: set[str] = set()
+    for tag, string in text.items():
+        normalized_tag = normalize_language_tag(tag)
+        if normalized_tag is None:
+            issues.append(
+                Issue("INVALID_LANGUAGE_TAG", "error", f"{field_path}/text/{tag}",
+                      "malformed language tag")
+            )
+        elif normalized_tag in normalized:
+            issues.append(
+                Issue("INVALID_LANGUAGE_TAG", "error", f"{field_path}/text/{tag}",
+                      "duplicate language tag after normalization")
+            )
+        else:
+            normalized.add(normalized_tag)
+        if not isinstance(string, str) or not string:
+            issues.append(
+                Issue("INVALID_LOCALIZED_TEXT", "error", f"{field_path}/text/{tag}",
+                      "localized text entries must be nonempty strings")
+            )
+    default = value.get("default")
+    if default is not None:
+        default_tag = normalize_language_tag(default)
+        if default_tag is None:
+            issues.append(
+                Issue("INVALID_LANGUAGE_TAG", "error", f"{field_path}/default",
+                      "malformed language tag")
+            )
+        elif default_tag not in normalized:
+            issues.append(
+                Issue("INVALID_LOCALIZED_TEXT", "error", f"{field_path}/default",
+                      "default language has no entry in text")
+            )
+    elif document_default is None:
+        issues.append(
+            Issue("INVALID_LOCALIZED_TEXT", "error", field_path,
+                  "localized text requires a default or a document default_language")
+        )
+    elif normalize_language_tag(document_default) not in normalized:
+        issues.append(
+            Issue("INVALID_LOCALIZED_TEXT", "error", field_path,
+                  "document default_language has no entry in text")
+        )
 
 
 def _type_ok(value: Any, expected: tuple[type, ...]) -> bool:
@@ -416,17 +620,38 @@ def _type_ok(value: Any, expected: tuple[type, ...]) -> bool:
     return isinstance(value, expected)
 
 
+def _resolve_type_name(type_name: str, templates: dict[str, Any]) -> str:
+    """Follow template references to the primitive type they ultimately define."""
+    seen: set[str] = set()
+    current = type_name
+    while current not in PRIMITIVE_TYPES and current in templates and current not in seen:
+        seen.add(current)
+        template = templates[current]
+        resolved = template.get("type") if isinstance(template, dict) else None
+        if not isinstance(resolved, str):
+            break
+        current = resolved
+    return current
+
+
 def _check_node(
-    node: dict[str, Any], path: str, issues: list[Issue], *, allow_id: bool = False
+    node: dict[str, Any],
+    path: str,
+    issues: list[Issue],
+    *,
+    allow_id: bool = False,
+    templates: dict[str, Any] | None = None,
+    document_default_language: str | None = None,
 ) -> None:
     """Validate one node definition and recurse into its children (4.6.2/4.6.3)."""
+    templates = templates or {}
     if not isinstance(node, dict):
         issues.append(Issue("DESCRIPTOR_STRUCTURE", "error", path, "Node must be an object"))
         return
     for key, value in node.items():
         if key in PROPERTY_TYPES:
             expected = PROPERTY_TYPES[key]
-            if key == "type" or key in ("enum", "const", "default", "minimum", "maximum"):
+            if key == "type":
                 continue
             if not _type_ok(value, expected):
                 issues.append(
@@ -449,6 +674,7 @@ def _check_node(
     if not isinstance(node_type, str):
         issues.append(Issue("DESCRIPTOR_STRUCTURE", "error", f"{path}/type", "type is required"))
         return
+    resolved_type = _resolve_type_name(node_type, templates)
 
     if node.get("required") is True and "default" in node:
         issues.append(
@@ -478,7 +704,9 @@ def _check_node(
                   f"Template name {node['typedef']!r} shadows a primitive type")
         )
     _check_enum_and_const(node, path, issues)
-    _check_scalar_constraints(node, path, issues)
+    _check_localized_text(node, "description", path, issues, document_default_language)
+    _check_localized_text(node, "title", path, issues, document_default_language)
+    _check_scalar_constraints(node, path, issues, resolved_type)
     _check_env(node, path, issues)
     _check_ui(node, path, issues)
     _check_helper(node, path, issues)
@@ -489,21 +717,34 @@ def _check_node(
     additional = node.get("additional_children")
     options = node.get("children_options")
 
-    if node_type == "object":
+    if resolved_type == "object":
         if isinstance(children, dict):
             for label, child in children.items():
                 child_path = f"{path}/children/{label}"
                 if not isinstance(child, dict):
                     issues.append(Issue("DESCRIPTOR_STRUCTURE", "error", child_path, "Child must be an object node"))
                     continue
-                _check_node(child, child_path, issues, allow_id=True)
+                _check_node(
+                    child,
+                    child_path,
+                    issues,
+                    allow_id=True,
+                    templates=templates,
+                    document_default_language=document_default_language,
+                )
         elif "children" in node:
             issues.append(
                 Issue("DESCRIPTOR_STRUCTURE", "error", f"{path}/children",
                       "children of an object must map labels to nodes")
             )
         if isinstance(additional, dict):
-            _check_node(additional, f"{path}/additional_children", issues)
+            _check_node(
+                additional,
+                f"{path}/additional_children",
+                issues,
+                templates=templates,
+                document_default_language=document_default_language,
+            )
         elif "additional_children" in node:
             issues.append(
                 Issue("DESCRIPTOR_STRUCTURE", "error", f"{path}/additional_children",
@@ -520,10 +761,16 @@ def _check_node(
                       "key_enum requires additional_children")
             )
         _check_unique_field_names(node, path, issues)
-    elif node_type == "array":
+    elif resolved_type == "array":
         if isinstance(children, dict):
             if is_item_node(children):
-                _check_node(children, f"{path}/children", issues)
+                _check_node(
+                    children,
+                    f"{path}/children",
+                    issues,
+                    templates=templates,
+                    document_default_language=document_default_language,
+                )
             else:
                 issues.append(
                     Issue("DESCRIPTOR_STRUCTURE", "error", f"{path}/children",
@@ -549,14 +796,26 @@ def _check_node(
                 issues.append(Issue("INVALID_STRUCTURE", "error", f"{path}/children_options",
                                     "children_options must be a nonempty array"))
             for index, option in enumerate(options):
-                _check_node(option, f"{path}/children_options/{index}", issues)
-    elif node_type == "union":
+                _check_node(
+                    option,
+                    f"{path}/children_options/{index}",
+                    issues,
+                    templates=templates,
+                    document_default_language=document_default_language,
+                )
+    elif resolved_type == "union":
         if isinstance(options, list):
             if not options:
                 issues.append(Issue("INVALID_STRUCTURE", "error", f"{path}/children_options",
                                     "a union requires a nonempty children_options"))
             for index, option in enumerate(options):
-                _check_node(option, f"{path}/children_options/{index}", issues)
+                _check_node(
+                    option,
+                    f"{path}/children_options/{index}",
+                    issues,
+                    templates=templates,
+                    document_default_language=document_default_language,
+                )
         else:
             issues.append(Issue("INVALID_STRUCTURE", "error", f"{path}/children_options",
                                 "a union requires children_options"))
@@ -571,7 +830,7 @@ def _check_node(
             if key in node:
                 issues.append(
                     Issue("INVALID_STRUCTURE", "error", f"{path}/{key}",
-                          f"{key} is not valid on type {node_type!r}")
+                          f"{key} is not valid on type {resolved_type!r}")
                 )
         if "key_pattern" in node or "key_enum" in node:
             issues.append(Issue("INVALID_STRUCTURE", "error", path,
@@ -584,8 +843,16 @@ def _check_node(
             issues.append(
                 Issue("INVALID_PATTERN", "error", f"{path}/pattern", f"Unsupported pattern: {exc}")
             )
+    if "key_pattern" in node and isinstance(node["key_pattern"], str):
+        try:
+            re.compile(node["key_pattern"])
+        except re.error as exc:
+            issues.append(
+                Issue("INVALID_PATTERN", "error", f"{path}/key_pattern",
+                      f"Unsupported pattern: {exc}")
+            )
     if "default" in node:
-        _check_default(node, f"{path}/default", issues)
+        _check_default(node, f"{path}/default", issues, templates)
 
 
 def _check_enum_and_const(node: dict[str, Any], path: str, issues: list[Issue]) -> None:
@@ -607,17 +874,18 @@ def _check_enum_and_const(node: dict[str, Any], path: str, issues: list[Issue]) 
                 )
 
 
-def _check_scalar_constraints(node: dict[str, Any], path: str, issues: list[Issue]) -> None:
-    node_type = node.get("type")
-    allowed = CONSTRAINT_BY_TYPE.get(node_type if isinstance(node_type, str) else "", ())
-    for other_type, keys in CONSTRAINT_BY_TYPE.items():
-        if other_type == node_type:
-            continue
+def _check_scalar_constraints(
+    node: dict[str, Any], path: str, issues: list[Issue], resolved_type: str
+) -> None:
+    allowed = CONSTRAINT_BY_TYPE.get(resolved_type, ())
+    reported: set[str] = set()
+    for keys in CONSTRAINT_BY_TYPE.values():
         for key in keys:
-            if key in node and key not in allowed:
+            if key in node and key not in allowed and key not in reported:
+                reported.add(key)
                 issues.append(
                     Issue("INVALID_STRUCTURE", "error", f"{path}/{key}",
-                          f"{key} does not apply to type {node_type!r}")
+                          f"{key} does not apply to type {resolved_type!r}")
                 )
 
 
@@ -745,13 +1013,16 @@ def _check_unique_field_names(node: dict[str, Any], path: str, issues: list[Issu
         seen[field_name] = label
 
 
-def _check_default(node: dict[str, Any], path: str, issues: list[Issue]) -> None:
+def _check_default(
+    node: dict[str, Any], path: str, issues: list[Issue], templates: dict[str, Any]
+) -> None:
     from .validator import value_matches_node  # local import: validator depends on this module
 
     try:
-        compiled = build_node(node, path, parent=None, templates={})
-    except DescriptorError as exc:
-        issues.append(Issue("INVALID_STRUCTURE", "error", path, exc.message))
+        expanded = expand_templates(node, templates, path)
+        compiled = build_node(expanded, path, parent=None, templates=templates)
+    except DescriptorError:
+        # The template reference or node shape is reported by its own check.
         return
     if not value_matches_node(node.get("default"), compiled):
         issues.append(
@@ -802,6 +1073,8 @@ def _collect_typedefs(data: Any, issues: list[Issue] | None = None, path: str = 
     templates: dict[str, dict] = {}
 
     def walk(node: dict[str, Any], node_path: str) -> None:
+        if not isinstance(node, dict):
+            return
         name = node.get("typedef")
         if isinstance(name, str):
             if name in templates and issues is not None:
@@ -820,6 +1093,8 @@ def _collect_typedefs(data: Any, issues: list[Issue] | None = None, path: str = 
 
 def _check_template_references(data: Any, templates: dict[str, Any], issues: list[Issue]) -> None:
     def walk(node: dict[str, Any], node_path: str, seen: tuple[str, ...]) -> None:
+        if not isinstance(node, dict):
+            return
         node_type = node.get("type")
         if isinstance(node_type, str) and node_type not in PRIMITIVE_TYPES:
             if node_type not in templates:
@@ -898,8 +1173,8 @@ def _merge_template(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
             base.get(key), type(value)
         ):
             combined = dict(base[key])
-            if key == "children" and "type" in combined and "type" in value:
-                combined = {"type": _merge_template(combined["type"], value["type"])}
+            if key == "children" and is_item_node(combined) and is_item_node(value):
+                combined = _merge_template(combined, value)
             elif key == "children_options":
                 combined = list(base[key])
                 for index, item in enumerate(value):
@@ -952,30 +1227,38 @@ def _mount(data: dict[str, Any], mount: str, root: dict[str, Any]) -> None:
     index = 1
     while index < len(tokens):
         token = tokens[index]
-        if token != "children":
+        if token == "children":
+            if not isinstance(container.get("children"), dict):
+                raise DescriptorError(f"Fragment mount {mount!r} does not exist", path=mount)
+            container = container["children"]
+            index += 1
+            if index >= len(tokens):
+                raise DescriptorError(
+                    f"Fragment mount {mount!r} must address a free field name", path=mount
+                )
+            label = tokens[index]
+            if index == len(tokens) - 1:
+                if label in container:
+                    raise DescriptorError(
+                        f"Fragment mount {mount!r} collides with an existing descriptor node",
+                        path=mount,
+                    )
+                container[label] = root
+                return
+            existing = container.get(label)
+            if not isinstance(existing, dict):
+                raise DescriptorError(f"Fragment mount {mount!r} does not exist", path=mount)
+            container = existing
+            index += 1
+            continue
+        if index == len(tokens) - 1:
             if token in container:
                 raise DescriptorError(
                     f"Fragment mount {mount!r} collides with an existing descriptor node", path=mount
                 )
             container[token] = root
             return
-        if not isinstance(container.get("children"), dict):
-            raise DescriptorError(f"Fragment mount {mount!r} does not exist", path=mount)
-        container = container["children"]
-        index += 1
-        if index >= len(tokens):
-            raise DescriptorError(
-                f"Fragment mount {mount!r} must address a free field name", path=mount
-            )
-        label = tokens[index]
-        if label in container:
-            raise DescriptorError(
-                f"Fragment mount {mount!r} collides with an existing descriptor node", path=mount
-            )
-        if index == len(tokens) - 1:
-            container[label] = root
-            return
-        existing = container.get(label)
+        existing = container.get(token)
         if not isinstance(existing, dict):
             raise DescriptorError(f"Fragment mount {mount!r} does not exist", path=mount)
         container = existing
@@ -1011,11 +1294,24 @@ def compile_descriptor(
 ) -> CompiledDescriptor:
     """Validate and compile descriptor source into effective nodes."""
     data = parse_descriptor(source)
+    if not isinstance(data, dict):
+        raise InvalidDescriptor(
+            "Descriptor is invalid",
+            issues=[
+                {
+                    "code": "DESCRIPTOR_SYNTAX",
+                    "severity": "error",
+                    "path": "",
+                    "message": "Descriptor root must be an object",
+                }
+            ],
+        )
+    typedef_list = list(typedef_sources)
+    fragment_list = list(fragments)
     templates = _collect_typedefs(data)
-    for extra, label in [(text, name) for text, name in zip(
-        list(typedef_sources) + [fragment.source for fragment in fragments],
-        ["typedef source", "fragment"] * (len(list(typedef_sources)) + len(list(fragments))),
-    )]:
+    sources = typedef_list + [fragment.source for fragment in fragment_list]
+    labels = ["typedef source"] * len(typedef_list) + ["fragment"] * len(fragment_list)
+    for extra, label in zip(sources, labels):
         extra_templates = _collect_typedefs(parse_descriptor(extra, origin=f"<{label}>"))
         for name, node in extra_templates.items():
             if name in templates:
@@ -1034,11 +1330,10 @@ def compile_descriptor(
     expanded = expand_templates(data.get("root"), templates, "/root")
     data = dict(data)
     data["root"] = expanded
-    fragment_list = list(fragments)
     if fragment_list:
         data = compose_fragments(data, fragment_list)
-        final = validate_descriptor(
-            _dump(data), mode="strict" if strict else "default", known_templates=templates
+        final = _validate_data(
+            data, mode="strict" if strict else "default", known_templates=templates
         )
         errors = [issue for issue in final.issues if issue.severity == "error"]
         if errors:
@@ -1046,7 +1341,18 @@ def compile_descriptor(
                 "Composed descriptor is invalid", issues=[issue.to_dict() for issue in errors]
             )
 
-    root = build_node(data["root"], "/root", parent=None, templates=templates)
+    default_language = (
+        normalize_language_tag(data.get("default_language"))
+        if isinstance(data.get("default_language"), str)
+        else None
+    )
+    root = build_node(
+        data["root"],
+        "/root",
+        parent=None,
+        templates=templates,
+        default_language=default_language,
+    )
     return CompiledDescriptor(
         raw=data,
         root=root,
@@ -1054,6 +1360,7 @@ def compile_descriptor(
         revision=revision_of(source),
         project=data.get("project"),
         config_version=data.get("config_version"),
+        default_language=default_language,
     )
 
 
@@ -1063,7 +1370,14 @@ def _dump(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
-def build_node(raw: dict[str, Any], path: str, *, parent: Node | None, templates: dict[str, Any]) -> Node:
+def build_node(
+    raw: dict[str, Any],
+    path: str,
+    *,
+    parent: Node | None,
+    templates: dict[str, Any],
+    default_language: str | None = None,
+) -> Node:
     """Build one compiled node; inherited flags come from the parent node."""
     if not isinstance(raw, dict):
         raise DescriptorError("Node must be an object", path=path)
@@ -1071,6 +1385,10 @@ def build_node(raw: dict[str, Any], path: str, *, parent: Node | None, templates
     if not isinstance(node_type, str):
         raise DescriptorError("type is required", path=path)
     env = raw.get("env") or {}
+    description, description_localized = _localized_text(
+        raw.get("description"), default_language
+    )
+    title, title_localized = _localized_text(raw.get("title"), default_language)
 
     def inherited(name: str) -> Any:
         if name in raw:
@@ -1083,8 +1401,10 @@ def build_node(raw: dict[str, Any], path: str, *, parent: Node | None, templates
         path=path,
         label=None,
         field_name=None,
-        description=raw.get("description"),
-        title=raw.get("title"),
+        description=description,
+        description_localized=description_localized,
+        title=title,
+        title_localized=title_localized,
         required=bool(raw.get("required", False)),
         nullable=bool(raw.get("nullable", False)),
         default=raw.get("default"),
@@ -1129,7 +1449,13 @@ def build_node(raw: dict[str, Any], path: str, *, parent: Node | None, templates
                 field_name = child_raw.get("id") if isinstance(child_raw.get("id"), str) else label
                 if field_name in children:
                     raise DescriptorError(f"Duplicate field name {field_name!r}", path=child_path)
-                child = build_node(child_raw, child_path, parent=node, templates=templates)
+                child = build_node(
+                    child_raw,
+                    child_path,
+                    parent=node,
+                    templates=templates,
+                    default_language=default_language,
+                )
                 child.label = label
                 child.field_name = field_name
                 children[field_name] = child
@@ -1137,16 +1463,32 @@ def build_node(raw: dict[str, Any], path: str, *, parent: Node | None, templates
         additional = raw.get("additional_children")
         if isinstance(additional, dict):
             node.additional_children = build_node(
-                additional, f"{path}/additional_children", parent=node, templates=templates
+                additional,
+                f"{path}/additional_children",
+                parent=node,
+                templates=templates,
+                default_language=default_language,
             )
     elif node_type in ("array", "union"):
         raw_children = raw.get("children")
         if isinstance(raw_children, dict) and is_item_node(raw_children):
-            node.item_node = build_node(raw_children, f"{path}/children", parent=node, templates=templates)
+            node.item_node = build_node(
+                raw_children,
+                f"{path}/children",
+                parent=node,
+                templates=templates,
+                default_language=default_language,
+            )
         options = raw.get("children_options")
         if isinstance(options, list):
             node.option_nodes = [
-                build_node(option, f"{path}/children_options/{index}", parent=node, templates=templates)
+                build_node(
+                    option,
+                    f"{path}/children_options/{index}",
+                    parent=node,
+                    templates=templates,
+                    default_language=default_language,
+                )
                 for index, option in enumerate(options)
             ]
     return node

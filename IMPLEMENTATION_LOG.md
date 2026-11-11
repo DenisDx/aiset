@@ -763,3 +763,42 @@ holds the reproductions and stays the record of what was asked for.
   - No Python source, route, descriptor or snapshot change.
   - `./test.sh`: 463 passed (same count; assertions live in the existing smoke
     test).
+
+- 2026-11-11. Implemented `proposal_improvement8.md` (A1–A21 and F1).
+  - `jsonsrc.py`: equal-length array replacement returns only the replaced
+    node's text; `apply_move` keeps document-level comments outside the array;
+    `apply_rename` and object-key creation reject control characters and line
+    breaks and use `fullmatch` for identifiers; truncated input and malformed
+    `\x` escapes raise positioned `ParseError`s; array-add reports an
+    out-of-range index or the append-token rule; inline object member creation
+    places the separator after the previous value.
+  - `descriptor.py`: non-object descriptors produce the documented diagnostic;
+    `minimum`/`maximum`/`enum` are type-checked; composition failures carry
+    `INVALID_DESCRIPTOR`; deep fragment mounts work and missing/colliding
+    targets are distinguished; unknown envelope keys are reported; `key_pattern`
+    is compile-checked; defaults are checked after template expansion; template
+    references resolve their defined type before type-applicability rules;
+    array item templates merge as nodes; misplaced constraints are reported
+    once; post-composition issues carry paths without generated positions;
+    typedef/fragment origins are labelled by kind. `DescriptorError` is an
+    `InvalidDescriptor` (and keeps `ValueError` compatibility).
+  - F1: `description`/`title` accept a string or a localized object; the new
+    envelope key `default_language` supplies the fallback; tags are normalized
+    to a BCP-47-like form; malformed tags, unknown keys, empty text and
+    unresolvable defaults are descriptor errors. `Node` keeps the
+    default-language string and the normalized map; the authorized descriptor
+    export stays flattened, while `Service.tree(..., locale=...)` and
+    `GET {base}/tree?...&locale=` resolve the active locale and carry
+    `description_localized`/`title_localized`. The browser contract and
+    `SPEC_service.md` section 19 were updated.
+  - `LICENSE` added (MIT). `run_demo2.sh --seed-only` separates seeding from
+    serving, and the launcher test uses it instead of relying on a 30-second
+    process timeout.
+  - Deviation: the proposal suggested a separate doctor check for localized
+    fields. R3 is enforced where the descriptor is validated, so an invalid
+    localized field can never reach a compiled descriptor; no document-level
+    doctor check was added.
+  - Licence holder: `LICENSE` names DenisDx.
+  - Tests added across `test_jsonsrc.py`, `test_descriptor.py`,
+    `test_tree_and_operations.py`, `test_http.py`, and `test_app.py`.
+  - `./test.sh`: 490 passed (was 463).

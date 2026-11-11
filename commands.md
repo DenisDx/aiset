@@ -41,6 +41,7 @@ checks, bind failure is reported instead of silently choosing another port.
 ./run_demo2.sh                                   # 0.0.0.0:8383 by default
 ./run_demo2.sh --demo2.server.port:8384          # document-scoped override
 ./run_demo2.sh --server.port:8384                # bare path override
+./run_demo2.sh --seed-only                       # seed missing state and exit
 DEMO2_STATE_DIR=/tmp/demo2 ./run_demo2.sh        # isolated state
 ```
 
